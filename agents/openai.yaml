@@ -1,0 +1,12 @@
+interface:
+  display_name: Work with YouTube
+  short_description: Analyze YouTube videos reproducibly
+  default_prompt: Use $work-with-youtube to analyze this YouTube video with cache-first
+    research.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
