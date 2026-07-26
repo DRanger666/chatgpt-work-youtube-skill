@@ -5,48 +5,6 @@ feature, investigation, design, and refinement work.
 
 ## Active items
 
-### LEDGER-009 — Add per-video artifact manifests
-
-- Status: Planned
-- Type: Design and implementation
-- Layer: Google Drive research storage
-- Problem: Drive cache records are named by execution-request fingerprints, so
-  the agent cannot deterministically enumerate the reusable transcript and
-  analysis material associated with one video.
-- Goal: Add one predictable per-video manifest in a clean v3 Drive namespace
-  that indexes immutable artifacts, compatibility metadata, valid coverage,
-  integrity hashes, and execution provenance without inheriting cache-v2
-  schemas or lookup behavior.
-- Next check:
-  - [ ] Finalize native manifest schema version `1` and update semantics.
-  - [ ] Fix the separate no-space v3 Drive namespace and deterministic lookup.
-  - [ ] Define recovery from missing or stale manifest entries.
-  - [ ] Prove clean-slate operation without cache-v2 data or fixtures.
-  - [ ] If useful, isolate v2 comparison in a disposable read-only validator
-        that production v3 code cannot import.
-- Related document:
-  [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
-
-### LEDGER-008 — Search artifacts before constructing requests
-
-- Status: Planned
-- Type: Design and implementation
-- Layer: Research artifact retrieval
-- Problem: An exact request fingerprint can prevent a byte-identical API call,
-  but it cannot determine whether existing artifacts already provide usable
-  or composable coverage for the current task.
-- Goal: Search by video, artifact kind, compatibility, and interval coverage;
-  construct Gemini requests only for uncovered material.
-- Next check:
-  - [ ] Define transcript compatibility and interval-union rules.
-  - [ ] Define handling for overlaps, truncation, and partial coverage.
-  - [ ] Keep execution fingerprints as last-moment idempotency guards.
-  - [ ] Keep v3 retrieval free of cache-v2 fallback and compatibility paths.
-  - [ ] Test exact, containing, composite, incompatible, and incomplete
-        coverage cases.
-- Related document:
-  [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
-
 ### LEDGER-001 — Run controlled clean-account installation trials
 
 - Status: Planned
@@ -97,6 +55,70 @@ feature, investigation, design, and refinement work.
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
 ## Closed items
+
+### LEDGER-009 — Add per-video artifact manifests
+
+- Status: Completed
+- Type: Design and implementation
+- Layer: Google Drive research storage
+- Problem: Drive cache records named by execution-request fingerprints could
+  not deterministically enumerate the reusable transcript and analysis
+  material associated with one video.
+- Goal: Add one predictable per-video manifest in a clean v3 Drive namespace
+  that indexes immutable artifacts, compatibility metadata, valid coverage,
+  integrity hashes, and execution provenance without inheriting cache-v2
+  schemas or lookup behavior.
+- Completed work:
+  - [x] Fixed native manifest and artifact schema version `1`.
+  - [x] Fixed the no-space `YouTubeArtifactCacheV3` namespace and deterministic
+        `<videoId>--manifest.json` lookup.
+  - [x] Indexed separately stored immutable artifacts, exact-byte integrity,
+        compatibility, coverage, gaps, completion, and execution provenance.
+  - [x] Added native recovery from missing or stale manifests without rewriting
+        artifact content.
+  - [x] Proved clean-slate operation without cache-v2 data or fixtures.
+  - [x] Rejected the optional v2 validator because native offline evidence was
+        sufficient.
+- Outcome:
+  - Missing indexes can be rebuilt from verified native artifacts and Drive
+    file IDs.
+  - Thirty-one native v3 tests and all fifteen retained repository tests pass.
+  - No Drive cache state, Gemini quota, v2 data, or installed skill was changed.
+- Implementation commits: `7b8a8ef`, `763d4cf`.
+- Related document:
+  [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
+
+### LEDGER-008 — Search artifacts before constructing requests
+
+- Status: Completed
+- Type: Design and implementation
+- Layer: Research artifact retrieval
+- Problem: An exact request fingerprint could prevent a byte-identical API
+  call, but it could not determine whether existing artifacts already provided
+  usable or composable coverage for the current task.
+- Goal: Search by video, artifact kind, compatibility, and interval coverage;
+  construct Gemini requests only for uncovered material.
+- Completed work:
+  - [x] Defined exact contract, timestamp-basis, and language-policy
+        compatibility with normalized half-open millisecond intervals.
+  - [x] Implemented exact, containing, composite, overlapping, truncated,
+        incompatible, stale, and missing coverage planning.
+  - [x] Returned only uncovered intervals for new request construction.
+  - [x] Required explicit agent approval before reusing arbitrary analysis
+        artifacts by task description.
+  - [x] Kept canonical execution fingerprints as provenance and last-moment
+        pending/completed duplicate guards.
+  - [x] Kept production v3 retrieval free of cache-v2 imports, fallbacks,
+        migration, and legacy fixtures.
+- Outcome:
+  - Compatible artifacts compose mechanically; truncated artifacts contribute
+    only confirmed valid coverage.
+  - Request JSON is not constructed until artifact search identifies a genuine
+    gap.
+  - Canonical fingerprint tests avoid a golden raw-request hash.
+- Implementation commits: `9bff861`, `763d4cf`.
+- Related document:
+  [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
 
 ### LEDGER-007 — Correct transcript-mode edge cases
 
