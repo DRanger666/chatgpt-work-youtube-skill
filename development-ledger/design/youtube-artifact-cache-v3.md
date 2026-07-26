@@ -79,6 +79,20 @@ These are Gemini execution requirements, not cache-v2 compatibility
 requirements. Cache v3 must implement them through native v3 records without
 importing or calling `gemini_cache.py`.
 
+## Persistent data-structure boundary
+
+Cache v3 uses three persisted data structures with non-overlapping ownership:
+
+| Data structure | Owns | Must not own |
+|---|---|---|
+| Immutable artifact record | Reusable generated material and the content-side metadata required to identify, interpret, and validate that material | Gemini execution IDs, lifecycle, attempts, routing, retries, leases, cooldowns, or provenance references |
+| Per-video artifact manifest | The minimal index needed to locate artifacts and plan compatible, integrity-checked coverage | Gemini execution lifecycle, history, routing, retry, concurrency, or provenance data |
+| Gemini execution journal | Canonical execution identity, requested work, lifecycle, routing attempts, retry authorization, reconciliation, and one-way references to produced artifact IDs | Artifact discovery or coverage-search responsibilities |
+
+Do not duplicate execution fields in either the immutable artifact or the
+per-video manifest for convenience. If execution history changes without
+creating a new reusable artifact, neither artifact-side data structure changes.
+
 ## Design A — Artifact-first retrieval and coverage planning
 
 Before constructing a Gemini request:
@@ -87,21 +101,22 @@ Before constructing a Gemini request:
 2. Load the artifact index for that video.
 3. Select candidates by artifact kind, such as transcript, translation,
    visual analysis, or question-specific analysis.
-4. Filter candidates by compatible contract version, timestamp basis,
-   language policy, and completion state.
+4. Filter candidates by compatible contract version, timestamp basis, and
+   language policy, then use only their recorded valid coverage.
 5. Compute the union of their valid coverage intervals.
-6. Identify truncated regions, incompatible material, and uncovered gaps.
+6. Identify incompatible material and uncovered gaps.
 7. Reuse complete or composable artifacts and generate only the missing
    intervals.
 8. Immediately before a network request, consult the durable Gemini execution
-   ledger using a canonical execution fingerprint.
+   journal using a canonical execution fingerprint.
 
 An exact interval is not a transcript identity. A transcript covering
 `0–1800s` can satisfy a request for `300–900s`, and multiple overlapping chunks
 can jointly satisfy a larger interval.
 
-Execution fingerprints remain provenance and duplicate-call guards. They do
-not drive the initial artifact search.
+Execution fingerprints identify canonical execution specifications for audit
+and duplicate-call prevention. They do not drive the initial artifact search
+or identify reusable artifacts.
 
 ### Acceptance cases
 
@@ -109,7 +124,8 @@ not drive the initial artifact search.
 - A larger compatible artifact contains the requested interval.
 - Multiple compatible chunks jointly cover the requested interval.
 - Overlapping chunks compose without turning the overlap into a gap.
-- A truncated chunk contributes only its confirmed completed coverage.
+- An artifact produced from a truncated result contributes only its confirmed
+  valid coverage.
 - Incompatible contracts or language policies are not silently reused.
 - Only uncovered intervals produce new Gemini requests.
 - An identical pending or completed execution is not submitted twice.
@@ -125,20 +141,45 @@ manifest per video:
 <videoId>--manifest.json
 ```
 
-Treat the manifest as a mutable index. Keep transcript chunks and other
-generated artifacts as separate records so they can be verified and reused
-independently.
+Treat the manifest exclusively as the mutable artifact-discovery index. Keep
+transcript chunks and other generated artifacts as separate immutable records
+so they can be verified and reused independently. The manifest is not a Gemini
+execution record, execution-history store, or provenance index.
 
-Each manifest entry should contain retrieval and provenance metadata such as:
+Apart from the manifest format version and video ID needed to identify and
+interpret the index, each manifest entry must contain only:
 
 - artifact ID and Drive file ID;
 - artifact kind and contract version;
 - timestamp basis and language policy;
 - valid coverage intervals;
-- completion, truncation, and gap information;
-- integrity hash of the stored artifact;
-- human-readable task description for analysis artifacts; and
-- references to the executions that produced or extended it.
+- integrity hash of the stored artifact; and
+- human-readable task description when an analysis artifact requires agent
+  review.
+
+Do not put any of the following in the manifest:
+
+- an executions array, execution IDs, execution fingerprints, or execution
+  provenance references;
+- pending, completed, failed, abandoned, or retry lifecycle state;
+- network attempts, retry reasons, leases, cooldowns, or credential-bucket
+  routing;
+- requested execution coverage; or
+- truncation history or request gaps that can be derived by comparing the
+  current requested interval with indexed valid coverage.
+
+An artifact produced by a truncated Gemini response contributes only the
+coverage that the artifact verifies as valid. The manifest does not preserve
+the truncation event. Gap planning is a query-time calculation from the current
+requested interval and the union of compatible valid coverage; gaps are not
+persisted as manifest state.
+
+Modify a manifest only when the searchable artifact set or its indexing
+metadata changes: for example, when adding a verified artifact, removing an
+invalid entry, repairing a Drive file reference, or correcting compatibility,
+coverage, or integrity metadata. A Gemini attempt, fallback, failure, retry,
+abandonment, cooldown, or completion that produces no new searchable artifact
+must leave the manifest unchanged.
 
 Never store credentials, authorization material, credential fragments, or
 credential fingerprints in manifests or artifacts.
@@ -152,18 +193,24 @@ normalization.
 ### Acceptance cases
 
 - A manifest can be located deterministically from a video ID.
-- Manifest coverage resolves every acceptance case in Design A.
+- Manifest coverage resolves the artifact-reuse and gap-planning acceptance
+  cases in Design A.
 - Missing or stale manifest entries do not destroy underlying artifacts.
 - Updating a manifest does not rewrite immutable artifact content.
+- Execution-only lifecycle changes do not rewrite the manifest.
 - A clean v3 namespace works correctly when no cache-v2 data exists.
 - Manifests and artifacts contain no legacy-only compatibility fields.
+- Manifests contain no Gemini execution lifecycle, history, routing, or
+  provenance fields.
 - The same reusable artifact content retains the same artifact ID regardless of
   which Gemini execution produced or verified it.
 
-## Design C — Durable Gemini execution ledger
+## Design C — Durable Gemini execution journal
 
-The per-video artifact manifest is a discovery index. It must not also be the
-only durable Gemini execution ledger.
+Use a separate durable Gemini execution data structure. The per-video artifact
+manifest must contain no execution lifecycle, history, routing, retry, lease,
+cooldown, or provenance fields and must not reference this execution data
+structure.
 
 Use separate native v3 execution records for:
 
@@ -176,15 +223,23 @@ Use separate native v3 execution records for:
   and
 - references to any artifacts produced by the execution.
 
+The relationship is one-way: an execution record may list the artifact IDs it
+produced, but neither the immutable artifact nor its manifest entry points back
+to an execution. Provenance remains available from the execution records
+without burdening the artifact-search index with execution-oriented fields or
+updates.
+
 Artifact-manifest reconstruction must not erase or reset execution records,
 failed attempts, retry reasons, or attempt numbering. Reconstruct artifact
-discovery from native artifacts and recover Gemini execution history directly
-from its separate native execution records.
+discovery exclusively from native artifacts and their content-side metadata.
+Recover Gemini execution history exclusively from its separate native
+execution records. Neither recovery procedure depends on or rewrites the other
+data structure.
 
 Do not include execution provenance in immutable artifact content or artifact
 identity. Derive an artifact ID from the reusable artifact material and its
-compatibility metadata. Keep execution references in the manifest and
-execution ledger so the same reusable artifact does not receive a different
+compatibility metadata. Keep execution-to-artifact references only in the
+execution records so the same reusable artifact does not receive a different
 identity merely because it was produced or verified by another execution.
 
 Before calling Gemini, complete this order:
@@ -193,12 +248,13 @@ Before calling Gemini, complete this order:
 2. Fetch and integrity-check only the artifacts selected for reuse or explicit
    analysis review.
 3. Replan if a selected artifact is missing, stale, or invalid.
-4. Consult and update the durable execution ledger.
+4. Consult and update the durable execution journal.
 5. Select a Gemini credential and execute only the remaining uncovered work.
 
 If a manifest is missing, enumerate and verify native artifacts for the video
 before initializing an empty manifest. Initialize an empty manifest only when
-no native artifacts exist.
+no native artifacts exist. Do not read execution records to reconstruct an
+artifact manifest.
 
 Raw Drive-file replacement currently provides no atomic compare-and-set
 operation through the connected workflow. Do not claim cross-session
@@ -237,13 +293,16 @@ during controlled validation.
   agent approval of an artifact ID before automatic interval reuse.
 - Derive artifact IDs from canonical reusable artifact content and
   compatibility metadata. Keep execution provenance outside immutable artifact
-  content and store a separate SHA-256 of the exact immutable JSON bytes in the
-  manifest.
+  content and the manifest. Store a separate SHA-256 of the exact immutable
+  JSON bytes in the manifest.
 - Upload an immutable artifact before replacing the mutable manifest. Rebuild a
   missing or stale manifest from verified native artifacts and Drive file IDs.
+- Update the manifest only for changes to the searchable artifact set or its
+  content-side indexing metadata. Do not update it for execution-only state
+  transitions.
 - Fingerprint a canonical execution specification only after artifact search.
   Store its lifecycle and router attempts in the separate native v3 execution
-  ledger. Block identical pending or completed executions, and require a
+  journal. Block identical pending or completed executions, and require a
   documented permitted reason before retrying an identical failed execution.
 - Do not implement the optional v2 validator. Native offline fixtures cover the
   required storage, retrieval, truncation, integrity, and idempotency evidence
@@ -253,8 +312,9 @@ The initial implementation deviated from this corrected design by using the
 artifact manifest as the only durable store for pending and failed execution
 state, not consuming `ROUTING_JSON`, allowing identical failed executions to
 restart without a reason, losing pending and failed history during manifest
-reconstruction, and including execution provenance in artifact identity. These
-are release blockers, not accepted design changes.
+reconstruction, placing execution-oriented metadata and references in the
+artifact manifest, and including execution provenance in artifact identity.
+These are release blockers, not accepted design changes.
 
 ## Test direction
 
@@ -273,7 +333,15 @@ Cache v3 should instead test:
 - missing-manifest reconstruction before empty initialization;
 - durable router-attempt history and failed-retry authorization;
 - pending expiry and reconciliation;
-- execution-ledger recovery independent of manifest recovery;
+- execution-journal recovery independent of manifest recovery;
+- manifest entries restricted to artifact-discovery, compatibility, coverage,
+  and integrity fields;
+- byte-stable manifests across execution-only pending, failure, fallback,
+  retry, cooldown, abandonment, and no-artifact completion changes;
+- one-way execution-to-artifact references with no artifact or manifest
+  back-reference;
+- replacement of tests that currently require manifest execution references
+  or other execution-derived manifest fields;
 - manifest lookup and update behavior; and
 - isolation from legacy lookup and schema assumptions.
 

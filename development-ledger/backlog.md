@@ -70,8 +70,11 @@ feature, investigation, design, and refinement work.
     in the artifact manifest. Completed provenance is also copied into
     artifacts, but manifest reconstruction still cannot recover pending or
     failed execution-only history.
-- Goal: Add a native v3 Gemini execution ledger without restoring cache-v2
-  schemas, filenames, lookup, migration, or fallback behavior.
+- Goal: Add a native v3 Gemini execution journal without restoring cache-v2
+  schemas, filenames, lookup, migration, or fallback behavior. Keep every
+  execution-oriented field in this separate data structure and link successful
+  executions to produced artifact IDs only in the execution-to-artifact
+  direction.
 - Next check:
   - [ ] Store pending, completed, and failed executions separately from the
         artifact-discovery manifest.
@@ -79,10 +82,14 @@ feature, investigation, design, and refinement work.
         failure.
   - [ ] Require a documented permitted reason before an identical failed
         request can run again.
-  - [ ] Preserve attempt history and numbering through retries and manifest
-        reconstruction.
+  - [ ] Preserve attempt history and numbering through retries, independently
+        of artifact-manifest reconstruction.
   - [ ] Add pending expiry and reconciliation without claiming unsupported
         cross-session atomicity.
+  - [ ] Keep the artifact manifest byte-stable across every execution-only
+        state change that produces no searchable artifact.
+  - [ ] Store produced artifact IDs on execution records without adding
+        execution back-references to artifacts or manifests.
   - [ ] Re-run LEDGER-004 routing, failure, cooldown, and retry-history tests
         against the native v3 execution lifecycle.
 - Related documents:
@@ -99,8 +106,10 @@ feature, investigation, design, and refinement work.
   material associated with one video.
 - Goal: Add one predictable per-video manifest in a clean v3 Drive namespace
   that indexes immutable artifacts, compatibility metadata, valid coverage,
-  integrity hashes, and execution references without inheriting cache-v2
-  schemas or lookup behavior.
+  integrity hashes, and analysis task descriptions when required for review,
+  without inheriting cache-v2 schemas or lookup behavior. Keep the manifest
+  exclusively optimized for artifact discovery, compatibility filtering,
+  coverage planning, and integrity verification.
 - Verified initial work:
   - [x] Fixed native manifest and artifact schema version `1`.
   - [x] Fixed the no-space `YouTubeArtifactCacheV3` namespace and deterministic
@@ -115,13 +124,22 @@ feature, investigation, design, and refinement work.
 - Release corrections:
   - [ ] Keep execution provenance outside immutable artifact content and
         artifact identity.
-  - [ ] Keep durable Gemini executions outside the artifact-discovery manifest.
+  - [ ] Restrict manifest entries to artifact and Drive IDs, artifact kind,
+        contract version, timestamp basis, language policy, valid coverage,
+        integrity hash, and an analysis task description when review requires
+        it.
+  - [ ] Remove execution references, lifecycle state, attempts, retry data,
+        leases, cooldowns, requested execution coverage, truncation history,
+        and persisted request gaps from the artifact-discovery manifest.
+  - [ ] Replace initial tests that require manifest execution references,
+        completion state, truncation history, or stored request gaps with
+        search-only manifest contract tests.
+  - [ ] Update the manifest only when the searchable artifact set or its
+        content-side indexing metadata changes.
   - [ ] Rebuild a missing manifest from existing native artifacts before
         initializing an empty manifest.
-  - [ ] Reconstruct artifact and execution state from their respective native
-        records without losing pending or failed execution history.
-  - [ ] Resolve the cross-session writer policy before claiming at-most-once
-        execution.
+  - [ ] Reconstruct the manifest from native artifacts without reading or
+        rewriting Gemini execution records.
 - Initial implementation commits: `7b8a8ef`, `763d4cf`.
 - Related document:
   [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
@@ -153,7 +171,7 @@ feature, investigation, design, and refinement work.
         artifact files.
   - [ ] Fetch and integrity-check only selected reuse or analysis-review
         candidates, then replan around stale material.
-  - [ ] Consult the separate Gemini execution ledger only after artifact
+  - [ ] Consult the separate Gemini execution journal only after artifact
         coverage planning and before credential selection.
   - [ ] Re-run exact, containing, composite, overlapping, truncated,
         incompatible, stale, and missing-coverage tests through the corrected
