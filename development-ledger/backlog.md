@@ -5,6 +5,44 @@ feature, investigation, design, and refinement work.
 
 ## Active items
 
+### LEDGER-009 — Add per-video artifact manifests
+
+- Status: Planned
+- Type: Design and implementation
+- Layer: Google Drive research storage
+- Problem: Drive cache records are named by execution-request fingerprints, so
+  the agent cannot deterministically enumerate the reusable transcript and
+  analysis material associated with one video.
+- Goal: Add one predictable per-video manifest that indexes immutable
+  artifacts, compatibility metadata, valid coverage, integrity hashes, and
+  execution provenance.
+- Next check:
+  - [ ] Finalize the manifest schema and update semantics.
+  - [ ] Define recovery from missing or stale manifest entries.
+  - [ ] Design read-through indexing of existing cache-v2 records.
+  - [ ] Test deterministic lookup without consuming Gemini quota.
+- Related document:
+  [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
+
+### LEDGER-008 — Search artifacts before constructing requests
+
+- Status: Planned
+- Type: Design and implementation
+- Layer: Research artifact retrieval
+- Problem: An exact request fingerprint can prevent a byte-identical API call,
+  but it cannot determine whether existing artifacts already provide usable
+  or composable coverage for the current task.
+- Goal: Search by video, artifact kind, compatibility, and interval coverage;
+  construct Gemini requests only for uncovered material.
+- Next check:
+  - [ ] Define transcript compatibility and interval-union rules.
+  - [ ] Define handling for overlaps, truncation, and partial coverage.
+  - [ ] Keep execution fingerprints as last-moment idempotency guards.
+  - [ ] Test exact, containing, composite, incompatible, and incomplete
+        coverage cases.
+- Related document:
+  [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
+
 ### LEDGER-001 — Run controlled clean-account installation trials
 
 - Status: Planned
