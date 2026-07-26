@@ -101,4 +101,6 @@ Translate and explain what is happening in this captionless video.
 - `scripts/build_gemini_chunk_request.py` — build timestamp-clipped requests.
 - `scripts/gemini_cache.py` — enforce the Gemini cache-record lifecycle.
 - `references/contracts.md` — version, credential, API, and cache contracts.
+- `development-ledger/` — ongoing investigations, design notes, debugging
+  records, and evidence-backed backlog items.
 - `CONTRIBUTING.md` — repository and commit-history conventions.
