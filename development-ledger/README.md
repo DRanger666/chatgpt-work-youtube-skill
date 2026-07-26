@@ -59,3 +59,9 @@ Use this minimum record:
 
 Detailed work can live in a separate document. The backlog entry should remain
 the concise index and lifecycle record.
+
+## Investigation index
+
+| Document | Scope |
+|---|---|
+| [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md) | Layer-aware clean-account installation testing and friction reporting |
