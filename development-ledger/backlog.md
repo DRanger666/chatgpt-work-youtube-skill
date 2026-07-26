@@ -5,6 +5,27 @@ feature, investigation, design, and refinement work.
 
 ## Active items
 
+### LEDGER-007 — Correct transcript-mode edge cases
+
+- Status: In progress
+- Type: Refinement
+- Layer: Gemini transcript requests
+- Problem:
+  - The timestamp schema accepts exactly two minute digits, so it rejects
+    full-video timestamps at or beyond 100 minutes.
+  - The transcript workflow does not state how to recover when Gemini returns
+    only part of a requested interval.
+- Goal: Correct these two blind spots without expanding transcript-mode scope.
+- Required work:
+  - [ ] Accept `MM:SS.mmm` timestamps whose minute component has at least two
+        digits, and test a clip after 7,200 seconds.
+  - [ ] Cache incomplete or truncated responses, but continue the unfinished
+        interval with smaller clips and new fingerprints instead of repeating
+        the identical request.
+  - [ ] Re-run all transcript, cache, and routing tests.
+- Constraints: Do not change MCP behavior, cache semantics, Gemini routing,
+  credential handling, or unrelated code.
+
 ### LEDGER-001 — Run controlled clean-account installation trials
 
 - Status: Planned

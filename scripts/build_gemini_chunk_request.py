@@ -14,14 +14,15 @@ TRANSCRIPT_PROMPT = (
     "people, or actions. Do not add commentary. Every timestamp must be a string in "
     "fixed MM:SS.mmm format relative to the complete source video; for example, "
     "5 minutes 26.5 seconds must be written as 05:26.500, never as 526.5 or as "
-    "elapsed seconds. Cover the complete supplied interval. Mark unclear words as "
-    "uncertain rather than inventing them; use [inaudible] only when no reliable "
-    "wording can be recovered. Return only the specified JSON structure."
+    "elapsed seconds. The minute component must have at least two digits and may "
+    "exceed 99 for long videos. Cover the complete supplied interval. Mark unclear "
+    "words as uncertain rather than inventing them; use [inaudible] only when no "
+    "reliable wording can be recovered. Return only the specified JSON structure."
 )
 
 TIMESTAMP_SCHEMA = {
     "type": "string",
-    "pattern": r"^[0-9]{2}:[0-5][0-9]\.[0-9]{3}$",
+    "pattern": r"^[0-9]{2,}:[0-5][0-9]\.[0-9]{3}$",
 }
 
 TRANSCRIPT_RESPONSE_SCHEMA = {
