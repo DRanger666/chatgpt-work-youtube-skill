@@ -78,10 +78,44 @@ PROVENANCE_FIELDS = {
     "startedAt",
     "finishedAt",
 }
+QUERY_FIELDS = {
+    "video",
+    "kind",
+    "contract",
+    "timestampBasis",
+    "languagePolicy",
+    "requestedCoverage",
+}
+QUERY_OPTIONAL_FIELDS = {"agentApprovedArtifactIds"}
+EXECUTION_SPEC_FIELDS = {
+    "video",
+    "route",
+    "model",
+    "requestedCoverage",
+    "request",
+}
+COVERAGE_CASE_ORDER = (
+    "exact",
+    "containing",
+    "composite",
+    "overlapping",
+    "truncated",
+    "incompatible",
+    "missing",
+)
 
 
 class CacheV3Error(ValueError):
     pass
+
+
+class DuplicateExecutionError(CacheV3Error):
+    def __init__(self, execution):
+        super().__init__(
+            "Identical execution is already "
+            f"{execution['status']}: {execution['executionId']}"
+        )
+        self.execution = execution
 
 
 def utc_now() -> str:
@@ -476,6 +510,8 @@ def build_artifact(metadata, content, provenance):
         "content": content,
     }
     task_description = metadata.get("taskDescription")
+    if "analysis" in metadata["kind"] and task_description is None:
+        raise CacheV3Error("Analysis artifacts require a task description")
     if task_description is not None:
         if not isinstance(task_description, str) or not task_description.strip():
             raise CacheV3Error("Task description must be a non-empty string")
@@ -513,6 +549,8 @@ def validate_artifact(artifact):
         or not artifact["taskDescription"].strip()
     ):
         raise CacheV3Error("Task description must be a non-empty string")
+    if "analysis" in artifact["kind"] and "taskDescription" not in artifact:
+        raise CacheV3Error("Analysis artifacts require a task description")
     validate_sha256(artifact["artifactId"], "artifact ID")
     content_for_id = dict(artifact)
     content_for_id.pop("artifactId")
@@ -619,6 +657,8 @@ def validate_manifest_artifact_entry(entry, video_id: str) -> None:
         or not entry["taskDescription"].strip()
     ):
         raise CacheV3Error("Task description must be a non-empty string")
+    if "analysis" in entry["kind"] and "taskDescription" not in entry:
+        raise CacheV3Error("Analysis artifacts require a task description")
 
 
 def execution_from_provenance(item, requested_coverage, artifact_id):
@@ -696,6 +736,12 @@ def add_artifact_to_manifest(
     if existing is not None:
         if existing != entry:
             raise CacheV3Error("Artifact ID already has different manifest metadata")
+        execution_count = len(manifest["executions"])
+        merge_artifact_provenance(manifest, artifact)
+        if len(manifest["executions"]) != execution_count:
+            manifest["executions"].sort(key=lambda item: item["executionId"])
+            manifest["updatedAt"] = updated_at or utc_now()
+            validate_manifest(manifest)
         return manifest
 
     merge_artifact_provenance(manifest, artifact)
@@ -732,6 +778,442 @@ def rebuild_manifest(
     manifest["updatedAt"] = updated_at or utc_now()
     validate_manifest(manifest)
     return manifest
+
+
+def verify_artifact_for_entry(entry, artifact_directory: Path, video_id: str):
+    path = artifact_directory.resolve() / entry["fileName"]
+    if not path.is_file():
+        raise CacheV3Error("missing_artifact_file")
+    if sha256_hex(path.read_bytes()) != entry["integrity"]["value"]:
+        raise CacheV3Error("integrity_mismatch")
+    artifact = load_json(path)
+    validate_artifact(artifact)
+    if artifact["videoId"] != video_id:
+        raise CacheV3Error("video_identity_mismatch")
+    expected_entry = manifest_artifact_entry(
+        artifact,
+        entry["driveFileId"],
+        path,
+    )
+    if expected_entry != entry:
+        raise CacheV3Error("manifest_metadata_mismatch")
+    return artifact
+
+
+def validate_query(query):
+    require_exact_fields(query, QUERY_FIELDS, QUERY_OPTIONAL_FIELDS, "query")
+    query["videoId"] = normalize_youtube_video_id(query.pop("video"))
+    validate_kind(query["kind"])
+    validate_contract(query["contract"])
+    if (
+        not isinstance(query["timestampBasis"], str)
+        or not query["timestampBasis"]
+    ):
+        raise CacheV3Error("Query timestamp basis must be a non-empty string")
+    validate_language_policy(query["languagePolicy"])
+    query["requestedCoverage"] = normalize_intervals(
+        query["requestedCoverage"],
+        "query requested coverage",
+    )
+    if not query["requestedCoverage"]:
+        raise CacheV3Error("Query requested coverage cannot be empty")
+    approved = query.get("agentApprovedArtifactIds", [])
+    if not isinstance(approved, list) or not all(
+        isinstance(item, str) and SHA256_PATTERN.fullmatch(item)
+        for item in approved
+    ):
+        raise CacheV3Error(
+            "agentApprovedArtifactIds must contain artifact SHA-256 IDs"
+        )
+    query["agentApprovedArtifactIds"] = sorted(set(approved))
+    return query
+
+
+def compatibility_reasons(entry, query):
+    reasons = []
+    if entry["contract"] != query["contract"]:
+        reasons.append("contract")
+    if entry["timestampBasis"] != query["timestampBasis"]:
+        reasons.append("timestamp_basis")
+    if canonical_json_bytes(entry["languagePolicy"]) != canonical_json_bytes(
+        query["languagePolicy"]
+    ):
+        reasons.append("language_policy")
+    return reasons
+
+
+def entry_summary(entry):
+    summary = {
+        "artifactId": entry["artifactId"],
+        "driveFileId": entry["driveFileId"],
+        "fileName": entry["fileName"],
+        "completionState": entry["completionState"],
+        "validCoverage": entry["validCoverage"],
+    }
+    if "taskDescription" in entry:
+        summary["taskDescription"] = entry["taskDescription"]
+    return summary
+
+
+def intervals_cover(covering, requested) -> bool:
+    return not subtract_intervals(requested, covering)
+
+
+def interval_duration(intervals) -> int:
+    return sum(item["endMs"] - item["startMs"] for item in intervals)
+
+
+def choose_covering_artifact(candidates, requested):
+    covering = [
+        item
+        for item in candidates
+        if intervals_cover(item["validCoverage"], requested)
+    ]
+    if not covering:
+        return None
+    covering.sort(
+        key=lambda item: (
+            item["validCoverage"] != requested,
+            interval_duration(item["validCoverage"]),
+            item["artifactId"],
+        )
+    )
+    return covering[0]
+
+
+def choose_composite_artifacts(candidates, requested):
+    selected = {}
+    for target in requested:
+        cursor = target["startMs"]
+        while cursor < target["endMs"]:
+            choices = []
+            next_start = None
+            for entry in candidates:
+                for coverage in intersect_intervals(
+                    entry["validCoverage"],
+                    [target],
+                ):
+                    if coverage["startMs"] <= cursor < coverage["endMs"]:
+                        choices.append((coverage["endMs"], entry["artifactId"], entry))
+                    elif coverage["startMs"] > cursor:
+                        if next_start is None or coverage["startMs"] < next_start:
+                            next_start = coverage["startMs"]
+            if choices:
+                _, _, chosen = max(choices, key=lambda item: (item[0], item[1]))
+                selected[chosen["artifactId"]] = chosen
+                furthest = max(
+                    coverage["endMs"]
+                    for coverage in intersect_intervals(
+                        chosen["validCoverage"],
+                        [target],
+                    )
+                    if coverage["startMs"] <= cursor < coverage["endMs"]
+                )
+                cursor = furthest
+            elif next_start is not None and next_start < target["endMs"]:
+                cursor = next_start
+            else:
+                break
+    return [selected[key] for key in sorted(selected)]
+
+
+def selected_artifacts_overlap(selected, requested) -> bool:
+    intervals = []
+    for entry in selected:
+        for interval in intersect_intervals(entry["validCoverage"], requested):
+            intervals.append(
+                (
+                    interval["startMs"],
+                    interval["endMs"],
+                    entry["artifactId"],
+                )
+            )
+    intervals.sort()
+    for index, left in enumerate(intervals):
+        for right in intervals[index + 1 :]:
+            if right[0] >= left[1]:
+                break
+            if left[2] != right[2] and right[0] < left[1]:
+                return True
+    return False
+
+
+def search_artifacts(manifest, artifact_directory: Path, query):
+    validate_manifest(manifest)
+    query = validate_query(dict(query))
+    if manifest["videoId"] != query["videoId"]:
+        raise CacheV3Error("Query and manifest video IDs differ")
+
+    approved = set(query["agentApprovedArtifactIds"])
+    compatible = []
+    incompatible = []
+    review_candidates = []
+    stale = []
+
+    for entry in manifest["artifacts"]:
+        if entry["kind"] != query["kind"]:
+            continue
+        reasons = compatibility_reasons(entry, query)
+        if reasons:
+            incompatible.append(
+                {
+                    **entry_summary(entry),
+                    "reasons": reasons,
+                }
+            )
+            continue
+        try:
+            verify_artifact_for_entry(
+                entry,
+                artifact_directory,
+                manifest["videoId"],
+            )
+        except CacheV3Error as error:
+            stale.append(
+                {
+                    "artifactId": entry["artifactId"],
+                    "driveFileId": entry["driveFileId"],
+                    "fileName": entry["fileName"],
+                    "reason": str(error),
+                }
+            )
+            continue
+        if "taskDescription" in entry and entry["artifactId"] not in approved:
+            review_candidates.append(entry_summary(entry))
+            continue
+        if intersect_intervals(
+            entry["validCoverage"],
+            query["requestedCoverage"],
+        ):
+            compatible.append(entry)
+
+    selected = []
+    cases = set()
+    covering = choose_covering_artifact(
+        compatible,
+        query["requestedCoverage"],
+    )
+    if covering is not None:
+        selected = [covering]
+        if covering["validCoverage"] == query["requestedCoverage"]:
+            cases.add("exact")
+        else:
+            cases.add("containing")
+    else:
+        selected = choose_composite_artifacts(
+            compatible,
+            query["requestedCoverage"],
+        )
+        if len(selected) > 1:
+            cases.add("composite")
+            if selected_artifacts_overlap(
+                selected,
+                query["requestedCoverage"],
+            ):
+                cases.add("overlapping")
+
+    selected_coverage = normalize_intervals(
+        [
+            interval
+            for entry in selected
+            for interval in intersect_intervals(
+                entry["validCoverage"],
+                query["requestedCoverage"],
+            )
+        ],
+        "selected coverage",
+    )
+    uncovered = subtract_intervals(
+        query["requestedCoverage"],
+        selected_coverage,
+    )
+    if any(entry["completionState"] == "truncated" for entry in selected):
+        cases.add("truncated")
+    if incompatible:
+        cases.add("incompatible")
+    if uncovered:
+        cases.add("missing")
+
+    if not uncovered:
+        coverage_status = "complete"
+    elif selected_coverage:
+        coverage_status = "partial"
+    else:
+        coverage_status = "missing"
+
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "cacheSystem": CACHE_SYSTEM,
+        "videoId": manifest["videoId"],
+        "kind": query["kind"],
+        "coverageStatus": coverage_status,
+        "coverageCases": [
+            item for item in COVERAGE_CASE_ORDER if item in cases
+        ],
+        "requestedCoverage": query["requestedCoverage"],
+        "coveredIntervals": selected_coverage,
+        "uncoveredIntervals": uncovered,
+        "newRequestIntervals": uncovered,
+        "selectedArtifacts": [entry_summary(entry) for entry in selected],
+        "incompatibleArtifacts": incompatible,
+        "reviewCandidates": review_candidates,
+        "requiresAgentReview": bool(review_candidates),
+        "staleManifestEntries": stale,
+    }
+
+
+def normalize_execution_spec(spec):
+    require_exact_fields(
+        spec,
+        EXECUTION_SPEC_FIELDS,
+        set(),
+        "execution spec",
+    )
+    normalized = {
+        "videoId": normalize_youtube_video_id(spec["video"]),
+        "route": spec["route"],
+        "model": spec["model"],
+        "requestedCoverage": normalize_intervals(
+            spec["requestedCoverage"],
+            "execution requested coverage",
+        ),
+        "request": normalize_request_video_uris(spec["request"]),
+    }
+    for field in ("route", "model"):
+        if not isinstance(normalized[field], str) or not normalized[field]:
+            raise CacheV3Error(
+                f"Execution {field} must be a non-empty string"
+            )
+    if not normalized["requestedCoverage"]:
+        raise CacheV3Error("Execution requested coverage cannot be empty")
+    if not isinstance(normalized["request"], dict):
+        raise CacheV3Error("Execution request must be a JSON object")
+    return normalized
+
+
+def normalize_request_video_uris(value):
+    if isinstance(value, list):
+        return [normalize_request_video_uris(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized = {}
+    for key, item in value.items():
+        if key == "fileUri" and isinstance(item, str):
+            try:
+                video_id = normalize_youtube_video_id(item)
+            except CacheV3Error:
+                normalized[key] = item
+            else:
+                normalized[key] = (
+                    f"https://www.youtube.com/watch?v={video_id}"
+                )
+        else:
+            normalized[key] = normalize_request_video_uris(item)
+    return normalized
+
+
+def execution_fingerprint(spec) -> str:
+    return sha256_hex(canonical_json_bytes(normalize_execution_spec(dict(spec))))
+
+
+def start_execution(manifest, spec, started_at=None):
+    validate_manifest(manifest)
+    normalized = normalize_execution_spec(dict(spec))
+    if manifest["videoId"] != normalized["videoId"]:
+        raise CacheV3Error("Execution and manifest video IDs differ")
+    fingerprint = sha256_hex(canonical_json_bytes(normalized))
+    for execution in manifest["executions"]:
+        if (
+            execution["fingerprint"] == fingerprint
+            and execution["status"] in {"pending", "completed"}
+        ):
+            raise DuplicateExecutionError(execution)
+
+    attempt = (
+        sum(
+            1
+            for execution in manifest["executions"]
+            if execution["fingerprint"] == fingerprint
+        )
+        + 1
+    )
+    execution = {
+        "executionId": f"exec-{fingerprint[:16]}-{attempt}",
+        "fingerprint": fingerprint,
+        "status": "pending",
+        "route": normalized["route"],
+        "model": normalized["model"],
+        "requestedCoverage": normalized["requestedCoverage"],
+        "startedAt": started_at or utc_now(),
+    }
+    validate_execution_record(execution)
+    manifest["executions"].append(execution)
+    manifest["executions"].sort(key=lambda item: item["executionId"])
+    manifest["updatedAt"] = started_at or utc_now()
+    return execution
+
+
+def provenance_for_execution(manifest, execution_id: str, finished_at=None):
+    validate_manifest(manifest)
+    execution = next(
+        (
+            item
+            for item in manifest["executions"]
+            if item["executionId"] == execution_id
+        ),
+        None,
+    )
+    if execution is None:
+        raise CacheV3Error(f"Unknown execution ID: {execution_id}")
+    if execution["status"] != "pending":
+        raise CacheV3Error("Provenance can be prepared only for a pending execution")
+    item = {
+        "executionId": execution["executionId"],
+        "fingerprint": execution["fingerprint"],
+        "route": execution["route"],
+        "model": execution["model"],
+        "startedAt": execution["startedAt"],
+        "finishedAt": finished_at or utc_now(),
+    }
+    validate_provenance([item])
+    return [item]
+
+
+def finish_execution(
+    manifest,
+    execution_id: str,
+    status: str,
+    artifact_ids=None,
+    finished_at=None,
+):
+    validate_manifest(manifest)
+    if status not in {"completed", "failed"}:
+        raise CacheV3Error("Execution can finish only as completed or failed")
+    execution = next(
+        (
+            item
+            for item in manifest["executions"]
+            if item["executionId"] == execution_id
+        ),
+        None,
+    )
+    if execution is None:
+        raise CacheV3Error(f"Unknown execution ID: {execution_id}")
+    if execution["status"] != "pending":
+        raise CacheV3Error("Only a pending execution can be finished")
+    artifact_ids = sorted(set(artifact_ids or []))
+    for artifact_id in artifact_ids:
+        validate_sha256(artifact_id, "artifact ID")
+    if status == "completed" and not artifact_ids:
+        raise CacheV3Error("Completed executions must reference an artifact")
+    if status == "failed" and artifact_ids:
+        raise CacheV3Error("Failed executions cannot reference artifacts")
+    execution["status"] = status
+    execution["finishedAt"] = finished_at or utc_now()
+    execution["artifactIds"] = artifact_ids
+    manifest["updatedAt"] = execution["finishedAt"]
+    validate_execution_record(execution)
+    return execution
 
 
 def command_locate(args) -> int:
@@ -811,6 +1293,82 @@ def command_rebuild_manifest(args) -> int:
     return 0
 
 
+def command_search(args) -> int:
+    manifest = load_json(Path(args.manifest))
+    query = load_json(Path(args.query))
+    plan = search_artifacts(
+        manifest,
+        Path(args.artifacts_dir),
+        query,
+    )
+    write_json(Path(args.output), plan)
+    print(Path(args.output).resolve())
+    return 0
+
+
+def command_start_execution(args) -> int:
+    manifest = load_json(Path(args.manifest))
+    spec = load_json(Path(args.execution_spec))
+    try:
+        execution = start_execution(
+            manifest,
+            spec,
+            started_at=args.started_at,
+        )
+    except DuplicateExecutionError as error:
+        print(
+            json.dumps(
+                {
+                    "status": "duplicate",
+                    "executionId": error.execution["executionId"],
+                    "executionStatus": error.execution["status"],
+                    "fingerprint": error.execution["fingerprint"],
+                },
+                sort_keys=True,
+            )
+        )
+        return 3
+    write_json(Path(args.output), manifest)
+    print(
+        json.dumps(
+            {
+                "status": "started",
+                "executionId": execution["executionId"],
+                "fingerprint": execution["fingerprint"],
+                "manifest": str(Path(args.output).resolve()),
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def command_execution_provenance(args) -> int:
+    manifest = load_json(Path(args.manifest))
+    provenance = provenance_for_execution(
+        manifest,
+        args.execution_id,
+        finished_at=args.finished_at,
+    )
+    write_json(Path(args.output), provenance)
+    print(Path(args.output).resolve())
+    return 0
+
+
+def command_finish_execution(args) -> int:
+    manifest = load_json(Path(args.manifest))
+    finish_execution(
+        manifest,
+        args.execution_id,
+        args.status,
+        artifact_ids=args.artifact_id,
+        finished_at=args.finished_at,
+    )
+    write_json(Path(args.output), manifest)
+    print(Path(args.output).resolve())
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Manage the clean-slate YouTube artifact cache v3"
@@ -849,6 +1407,36 @@ def build_parser():
     rebuild.add_argument("--output", required=True)
     rebuild.add_argument("--updated-at")
     rebuild.set_defaults(handler=command_rebuild_manifest)
+
+    search = subparsers.add_parser("search")
+    search.add_argument("--manifest", required=True)
+    search.add_argument("--artifacts-dir", required=True)
+    search.add_argument("--query", required=True)
+    search.add_argument("--output", required=True)
+    search.set_defaults(handler=command_search)
+
+    start = subparsers.add_parser("start-execution")
+    start.add_argument("--manifest", required=True)
+    start.add_argument("--execution-spec", required=True)
+    start.add_argument("--output", required=True)
+    start.add_argument("--started-at")
+    start.set_defaults(handler=command_start_execution)
+
+    prepare = subparsers.add_parser("execution-provenance")
+    prepare.add_argument("--manifest", required=True)
+    prepare.add_argument("--execution-id", required=True)
+    prepare.add_argument("--finished-at")
+    prepare.add_argument("--output", required=True)
+    prepare.set_defaults(handler=command_execution_provenance)
+
+    finish = subparsers.add_parser("finish-execution")
+    finish.add_argument("--manifest", required=True)
+    finish.add_argument("--execution-id", required=True)
+    finish.add_argument("--status", choices=("completed", "failed"), required=True)
+    finish.add_argument("--artifact-id", action="append", default=[])
+    finish.add_argument("--finished-at")
+    finish.add_argument("--output", required=True)
+    finish.set_defaults(handler=command_finish_execution)
 
     return parser
 
