@@ -54,6 +54,25 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
+### LEDGER-004 — Add interactive Gemini quota-pool routing
+
+- Status: In progress
+- Type: Feature
+- Layer: Gemini API
+- Evidence: Gemini quotas are enforced per Google Cloud project. The user has
+  supplied a fallback credential from another account for interactive
+  continuity, but blind round-robin rotation would drain both projects and
+  could create retry storms.
+- Next check:
+  - [ ] Add a private fallback-key credential contract.
+  - [ ] Implement primary-first, project-aware failover with cooldowns.
+  - [ ] Preserve every retry in one request-fingerprint cache record.
+  - [ ] Mock `429`, transient `5xx`, terminal `400`, and credential failures.
+  - [ ] Validate each credential once without deliberately approaching quota.
+  - [ ] Keep all long-video chunks sequential by default.
+- Related document:
+  [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
+
 ## Closed items
 
 No entries yet.

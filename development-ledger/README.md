@@ -65,3 +65,4 @@ the concise index and lifecycle record.
 | Document | Scope |
 |---|---|
 | [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md) | Layer-aware clean-account installation testing and friction reporting |
+| [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md) | Conservative two-project Gemini routing for interactive video analysis |
