@@ -76,6 +76,10 @@ uses fixed full-video timestamp strings, and defaults to the tested
 with 600-second chunks and a four-second overlap. Cache and route every chunk
 through the normal Gemini workflow.
 
+Cache an incomplete or truncated response, but do not treat it as complete
+coverage. Process the unfinished interval with smaller clips, which create new
+request fingerprints. Never recover by repeating the identical request.
+
 ## Run a mandatory Gemini cache transaction
 
 Perform these steps for every Gemini call, including chunk synthesis:

@@ -107,6 +107,14 @@ For long transcripts, use the existing planner with
 `--chunk-seconds 600 --overlap-seconds 4`. Keep the generated full-video
 timestamps when reconciling the overlap.
 
+Treat a transcript response as incomplete when `transcription_complete` is
+false, `truncation_detected` is true, `completed_through_timestamp` does not
+cover the requested interval, or the API finish reason reports output
+truncation. Finish and retain its normal cache record, but do not treat that
+record as complete coverage. Request the unfinished interval in smaller clips;
+the changed clip bounds produce new fingerprints. Do not repeat or reopen the
+identical request for truncation recovery.
+
 ## Interactive Gemini quota pool
 
 The pool contains at most two aliases:

@@ -5,27 +5,6 @@ feature, investigation, design, and refinement work.
 
 ## Active items
 
-### LEDGER-007 — Correct transcript-mode edge cases
-
-- Status: In progress
-- Type: Refinement
-- Layer: Gemini transcript requests
-- Problem:
-  - The timestamp schema accepts exactly two minute digits, so it rejects
-    full-video timestamps at or beyond 100 minutes.
-  - The transcript workflow does not state how to recover when Gemini returns
-    only part of a requested interval.
-- Goal: Correct these two blind spots without expanding transcript-mode scope.
-- Required work:
-  - [ ] Accept `MM:SS.mmm` timestamps whose minute component has at least two
-        digits, and test a clip after 7,200 seconds.
-  - [ ] Cache incomplete or truncated responses, but continue the unfinished
-        interval with smaller clips and new fingerprints instead of repeating
-        the identical request.
-  - [ ] Re-run all transcript, cache, and routing tests.
-- Constraints: Do not change MCP behavior, cache semantics, Gemini routing,
-  credential handling, or unrelated code.
-
 ### LEDGER-001 — Run controlled clean-account installation trials
 
 - Status: Planned
@@ -76,6 +55,32 @@ feature, investigation, design, and refinement work.
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
 ## Closed items
+
+### LEDGER-007 — Correct transcript-mode edge cases
+
+- Status: Completed
+- Type: Refinement
+- Layer: Gemini transcript requests
+- Problem:
+  - The timestamp schema accepted exactly two minute digits, so it rejected
+    full-video timestamps at or beyond 100 minutes.
+  - The transcript workflow did not state how to recover when Gemini returned
+    only part of a requested interval.
+- Goal: Correct these two blind spots without expanding transcript-mode scope.
+- Completed work:
+  - [x] Accepted `MM:SS.mmm` timestamps whose minute component has at least two
+        digits, and tested a clip after 7,200 seconds.
+  - [x] Required incomplete or truncated responses to remain cached while the
+        unfinished interval is processed with smaller clips and new
+        fingerprints.
+  - [x] Re-ran all transcript, cache, and routing tests.
+- Outcome:
+  - The timestamp test accepts `120:00.000` and rejects a one-digit minute
+    component.
+  - Fifteen offline tests pass.
+  - MCP behavior, cache semantics, Gemini routing, credential handling, and
+    unrelated code remain unchanged.
+- Related commit: `caee5b6`.
 
 ### LEDGER-006 — Add Gemini transcript-only mode
 
