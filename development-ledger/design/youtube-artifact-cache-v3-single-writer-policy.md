@@ -55,8 +55,9 @@ that video's write path. Other sessions may continue read-only work but must
 not steal, replace, or race the writer.
 
 The established writer may resume or renew its own work after rereading the
-latest execution state. Its owner identifier is session-specific and must not
-be reused by a later session.
+latest execution state. Generate its owner identifier through the journal tool
+with at least 128 bits of randomness. Reject an identifier already present in
+that video's writer history; a later session must never reuse it.
 
 ## Lease expiry and reconciliation
 
@@ -78,12 +79,17 @@ Never convert expiry directly into permission to call Gemini.
 ## Writer handoff and abandonment
 
 For a clean handoff, the outgoing writer must confirm that no Gemini call
-remains in flight, persist all attempt and artifact state, finish or release
-pending work, and record the handoff. The incoming writer rereads that durable
-state before recording ownership.
+remains in flight, persist all attempt, result, and artifact state, finish or
+release pending work, and record the handoff. The incoming writer rereads that
+durable state before recording ownership. A handoff names exactly one incoming
+owner and reserves the next acquisition for that owner. A different owner may
+proceed only through explicit reconciliation that preserves and supersedes the
+handoff.
 
 After a crash or lost VM, record abandonment only through reconciliation.
-Never delete or overwrite the abandoned writer's history.
+When the network outcome cannot be reconstructed, record it as unknown rather
+than failed. Never delete or overwrite the abandoned writer's history, invent
+missing router attempts, or automatically retry ambiguous work.
 
 ## Supported guarantees
 
@@ -112,5 +118,7 @@ search fields.
 
 Summarize this policy in `SKILL.md` and `references/contracts.md`; do not
 reinterpret it there. Test same-video blocking, read-only concurrency,
-different-video independence, expiry reconciliation, handoff, and abandonment
-without claiming Drive-backed atomic exclusion.
+different-video independence, generated non-reused owner IDs,
+recipient-constrained handoff, chronological event history, expiry
+reconciliation, unknown outcomes, and abandonment without claiming
+Drive-backed atomic exclusion.

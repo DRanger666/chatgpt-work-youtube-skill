@@ -1,11 +1,24 @@
 # YouTube artifact cache v3
 
+## Contents
+
+- [Status](#status)
+- [Problem and clean-slate boundary](#problem)
+- [Retained Gemini requirements](#gemini-execution-requirements-retained-from-ledger-004)
+- [Persistent data structures](#persistent-data-structure-boundary)
+- [Artifact-first retrieval](#design-a--artifact-first-retrieval-and-coverage-planning)
+- [Manifest and artifact storage](#design-b--per-video-manifest-and-artifact-storage)
+- [Bound execution and durable results](#design-c--bound-gemini-execution-and-durable-result)
+- [Implementation and tests](#implementation-decisions)
+- [Non-goals](#non-goals)
+
 ## Status
 
-Approved clean-slate direction with a release correction required. The initial
-feature-branch implementation must not be merged or used for live v3 data until
-the artifact-search, manifest, and Gemini execution contracts satisfy this
-corrected design together.
+Approved clean-slate architecture with a second release correction specified
+and implementation pending. Preserve the audited feature-branch tip
+`b8598e4` as the pre-correction checkpoint. Do not merge the branch or create
+live v3 data until request binding, durable result storage, transcript
+validation, and journal-state invariants satisfy this design together.
 
 ## Problem
 
@@ -60,9 +73,12 @@ The v3 workflow must retain these exact Gemini requirements:
 1. Complete artifact discovery before selecting a Gemini credential.
 2. Keep at most one Gemini video request in flight within a workflow.
 3. Consume the safe routing metadata emitted by `gemini_request.py`.
-4. Persist every Gemini network attempt, including bucket alias, timestamps,
-   HTTP status, classification, error status, retry delay, cooldown, and
-   backoff when present.
+4. Persist every Gemini network attempt returned in terminal router metadata,
+   including bucket alias, timestamps, HTTP status, classification, error
+   status, retry delay, cooldown, and backoff when present. If a process or VM
+   disappears before terminal metadata becomes durable, preserve the pending
+   execution as an unknown network outcome rather than inventing attempt
+   details or treating it as a confirmed failure.
 5. Preserve prior attempt history across primary/fallback routing and every
    later retry.
 6. Permit an identical failed Gemini request to run again only when a
@@ -81,17 +97,20 @@ importing or calling `gemini_cache.py`.
 
 ## Persistent data-structure boundary
 
-Cache v3 uses three persisted data structures with non-overlapping ownership:
+Cache v3 uses four persisted data structures with non-overlapping ownership:
 
 | Data structure | Owns | Must not own |
 |---|---|---|
+| Immutable execution-result record | The exact safe Gemini response bytes and their integrity identity | Artifact compatibility, reusable coverage, manifest indexing, writer lifecycle, routing history, or credentials |
 | Immutable artifact record | Reusable generated material and the content-side metadata required to identify, interpret, and validate that material | Gemini execution IDs, lifecycle, attempts, routing, retries, leases, cooldowns, or provenance references |
-| Per-video artifact manifest | The minimal index needed to locate artifacts and plan compatible, integrity-checked coverage | Gemini execution lifecycle, history, routing, retry, concurrency, or provenance data |
-| Gemini execution journal | Canonical execution identity, requested work, lifecycle, routing attempts, retry authorization, reconciliation, and one-way references to produced artifact IDs | Artifact discovery or coverage-search responsibilities |
+| Per-video artifact manifest | The minimal index needed to locate artifacts and plan compatible, integrity-checked coverage | Gemini execution lifecycle, history, routing, retry, concurrency, result-record, or provenance data |
+| Gemini execution journal | Bound request identity, requested work, lifecycle, routing attempts, retry authorization, reconciliation, and one-way references to its durable result and any produced artifact IDs | Artifact discovery or coverage-search responsibilities |
 
-Do not duplicate execution fields in either the immutable artifact or the
-per-video manifest for convenience. If execution history changes without
-creating a new reusable artifact, neither artifact-side data structure changes.
+Do not duplicate execution or result fields in either the immutable artifact
+or the per-video manifest for convenience. A successful network result does
+not become a reusable artifact merely because it was persisted. If execution
+history or result evidence changes without creating a validated reusable
+artifact, neither artifact-side data structure changes.
 
 ## Design A — Artifact-first retrieval and coverage planning
 
@@ -107,8 +126,10 @@ Before constructing a Gemini request:
 6. Identify incompatible material and uncovered gaps.
 7. Reuse complete or composable artifacts and generate only the missing
    intervals.
-8. Immediately before a network request, consult the durable Gemini execution
-   journal using a canonical execution fingerprint.
+8. Build and validate one bound execution from the exact request file and
+   endpoint that the router will receive.
+9. Immediately before credential selection, consult and reserve the durable
+   Gemini execution journal using that bound execution fingerprint.
 
 An exact interval is not a transcript identity. A transcript covering
 `0–1800s` can satisfy a request for `300–900s`, and multiple overlapping chunks
@@ -128,6 +149,8 @@ or identify reusable artifacts.
   valid coverage.
 - Incompatible contracts or language policies are not silently reused.
 - Only uncovered intervals produce new Gemini requests.
+- The router refuses any request file or endpoint that differs from the
+  reserved pending execution.
 - An identical pending or completed execution is not submitted twice.
 - An identical failed execution is not submitted again without a documented
   permitted retry reason.
@@ -161,6 +184,7 @@ Do not put any of the following in the manifest:
 
 - an executions array, execution IDs, execution fingerprints, or execution
   provenance references;
+- execution-result IDs, response bodies, or result-record Drive references;
 - pending, completed, failed, abandoned, or retry lifecycle state;
 - network attempts, retry reasons, leases, cooldowns, or credential-bucket
   routing;
@@ -168,11 +192,13 @@ Do not put any of the following in the manifest:
 - truncation history or request gaps that can be derived by comparing the
   current requested interval with indexed valid coverage.
 
-An artifact produced by a truncated Gemini response contributes only the
-coverage that the artifact verifies as valid. The manifest does not preserve
-the truncation event. Gap planning is a query-time calculation from the current
-requested interval and the union of compatible valid coverage; gaps are not
-persisted as manifest state.
+A validated artifact produced from a truncated Gemini response contributes
+only the coverage derived by its contract adapter. The immutable execution
+result remains durable even when validation produces no reusable artifact.
+The manifest does not preserve the truncation event or index an invalid
+result. Gap planning is a query-time calculation from the current requested
+interval and the union of compatible valid coverage; gaps are not persisted as
+manifest state.
 
 Modify a manifest only when the searchable artifact set or its indexing
 metadata changes: for example, when adding a verified artifact, removing an
@@ -205,64 +231,187 @@ normalization.
 - The same reusable artifact content retains the same artifact ID regardless of
   which Gemini execution produced or verified it.
 
-## Design C — Durable Gemini execution journal
+## Design C — Bound Gemini execution and durable result
 
-Use a separate durable Gemini execution data structure. The per-video artifact
-manifest must contain no execution lifecycle, history, routing, retry, lease,
-cooldown, or provenance fields and must not reference this execution data
-structure.
+Use the separate per-video Gemini execution journal for execution state. The
+artifact manifest must contain no request binding, result reference, lifecycle,
+history, routing, retry, lease, cooldown, or provenance fields.
 
-Use separate native v3 execution records for:
+### Request-to-router binding
 
-- the canonical execution fingerprint and requested coverage;
-- pending, completed, and failed lifecycle state;
+Create a pending execution from the exact request file and endpoint that the
+router will receive. Do not ask an agent to reproduce the request inside an
+independent execution-spec file. The binding must contain:
+
+- normalized video ID;
+- requested half-open millisecond coverage;
+- route and HTTP method;
+- endpoint and model identity;
+- SHA-256 of the exact request-file bytes;
+- SHA-256 of the canonical parsed request JSON; and
+- a canonical execution fingerprint derived from the video, coverage, route,
+  model, endpoint identity, and canonical request JSON.
+
+The exact-byte digest binds the reserved execution to the transport file. The
+canonical digest and execution fingerprint make irrelevant JSON whitespace and
+object-key ordering immaterial to duplicate detection. Neither digest is an
+artifact-discovery key.
+
+For the initial YouTube workflow, require exactly one video input. Normalize
+every embedded `fileUri` and require it to match the journal video ID. Parse
+its `videoMetadata.startOffset` and `endOffset`, convert them to the repository's
+millisecond interval representation, and require exact agreement with requested
+coverage. Derive or verify the model and route from an allowed Gemini endpoint;
+do not trust independently typed labels.
+
+After the pending binding is durable, the router must recompute both request
+digests from the file it is about to read and verify the endpoint, model, route,
+and pending execution identity before loading a credential or performing
+network I/O. A missing, stale, or mismatched binding must fail closed.
+
+### Immutable execution-result records
+
+Persist every successful Gemini response before marking its execution
+completed. Store the exact safe `RESPONSE_JSON` bytes as an immutable
+content-addressed result record named:
+
+```text
+<videoId>--gemini-result--<resultId>.json
+```
+
+Derive `resultId` from the exact response bytes. The journal stores the result
+ID, deterministic filename, Drive file ID, and integrity digest. The result
+record contains no credential, authorization header, bucket secret, artifact
+compatibility claim, or reusable coverage.
+
+A successful response remains durable even when it is malformed, truncated,
+or unsuitable for reuse. Such a result is evidence of what Gemini returned; it
+does not become a transcript or analysis artifact merely because the HTTP
+request succeeded. A completed execution must reference its durable result.
+Artifact references remain optional because validation may correctly produce
+none.
+
+The relationships remain one-way:
+
+- the execution journal references its immutable result and any validated
+  reusable artifacts;
+- a reusable artifact and its manifest entry do not reference the execution or
+  result; and
+- an execution result is never indexed in the artifact manifest.
+
+### Transcript-v1 result adapter
+
+Create a `gemini-transcript` version `1` artifact only through a deterministic
+adapter that reads a bound execution and its verified immutable result. The
+adapter must:
+
+1. extract the generated JSON from the successful Gemini response envelope;
+2. require exactly the transcript-v1 fields and their documented types;
+3. parse every full-video timestamp and enforce the
+   `MM:SS.mmm`-with-unbounded-minutes syntax;
+4. require returned clip bounds to equal the bound request interval;
+5. require each segment to have positive, in-range bounds and nondecreasing
+   start order, while allowing genuine overlapping speech;
+6. validate `completed_through_timestamp`, `transcription_complete`,
+   `truncation_detected`, and the Gemini finish reason as one consistent state;
+   and
+7. derive valid coverage mechanically from the bound clip start through the
+   verified completed-through timestamp.
+
+Caller-supplied coverage must never enter a transcript artifact. A complete
+result covers the full bound interval. A valid incomplete result may create a
+partial transcript artifact and leaves the remainder uncovered. A malformed or
+internally inconsistent result creates no reusable transcript artifact and
+claims no coverage.
+
+Do not automatically repeat a completed execution whose result was malformed
+or unusable. Preserve the result, expose the uncovered interval and blocking
+execution, and require either a changed request or an explicitly documented
+human-authorized retry.
+
+### Journal state-machine invariants
+
+Use native v3 execution records for:
+
+- the bound request identity and requested coverage;
+- pending, completed, failed, and unknown-outcome lifecycle state;
 - pending ownership, expiry, and reconciliation evidence;
-- the documented reason for an identical failed-request retry;
-- every safe router attempt emitted through `ROUTING_JSON`;
-- final status, selected bucket alias, model and usage metadata when present;
+- the documented reason for every permitted identical retry;
+- every safe router attempt emitted through terminal `ROUTING_JSON`;
+- final status, selected bucket, result reference, and artifact references;
   and
-- references to any artifacts produced by the execution.
+- model and usage metadata when present.
 
-The relationship is one-way: an execution record may list the artifact IDs it
-produced, but neither the immutable artifact nor its manifest entry points back
-to an execution. Provenance remains available from the execution records
-without burdening the artifact-search index with execution-oriented fields or
-updates.
+Enforce these invariants:
 
-Artifact-manifest reconstruction must not erase or reset execution records,
-failed attempts, retry reasons, or attempt numbering. Reconstruct artifact
-discovery exclusively from native artifacts and their content-side metadata.
-Recover Gemini execution history exclusively from its separate native
-execution records. Neither recovery procedure depends on or rewrites the other
-data structure.
+- a pending execution has one current writer and one immutable request binding;
+- a completed execution has terminal success routing metadata and one durable
+  result reference;
+- a failed execution has terminal failure metadata and no fabricated result;
+- an unchanged terminal request failure cannot be retried;
+- an identical failed, abandoned, unknown-outcome, or explicitly approved
+  unusable-result execution cannot retry without a recorded reason;
+- a retry cannot begin before the applicable durable cooldown expires;
+- attempt start and finish times, execution times, lease times, retry
+  authorizations, and writer events are chronologically consistent;
+- HTTP status, classification, selected bucket, and terminal routing status are
+  mutually consistent; and
+- writer history, current ownership, pending ownership, handoff target, and
+  lease state describe the same lifecycle.
 
-Do not include execution provenance in immutable artifact content or artifact
-identity. Derive an artifact ID from the reusable artifact material and its
-compatibility metadata. Keep execution-to-artifact references only in the
-execution records so the same reusable artifact does not receive a different
-identity merely because it was produced or verified by another execution.
+Generate a fresh high-entropy session owner ID through the journal tool. Reject
+an owner ID already present in that video's history. A recorded handoff reserves
+the next acquisition for its named recipient; another owner cannot acquire
+without explicit reconciliation.
 
-Before calling Gemini, complete this order:
+Artifact-manifest reconstruction must not erase or reset results, execution
+records, failed attempts, retry reasons, cooldowns, or attempt numbering.
+Result recovery follows journal references and deterministic result filenames.
+Artifact recovery uses only validated reusable artifacts. Neither recovery path
+rewrites the other data structure.
 
-1. Plan coverage from manifest metadata.
-2. Fetch and integrity-check only the artifacts selected for reuse or explicit
-   analysis review.
-3. Replan if a selected artifact is missing, stale, or invalid.
-4. Consult and update the durable execution journal.
-5. Select a Gemini credential and execute only the remaining uncovered work.
+### Ordered write procedure
+
+Before calling Gemini:
+
+1. plan coverage from manifest metadata;
+2. fetch and verify only selected reusable artifacts;
+3. replan around stale or invalid selections;
+4. acquire the supported per-video writer and reread artifact state;
+5. create the binding from the exact router request and endpoint;
+6. reserve the pending execution and make the journal durable; and
+7. let the router verify that binding before credential selection.
+
+After the router returns:
+
+1. on failure, finalize the journal with its exact terminal routing metadata;
+2. on success, upload the immutable execution result first;
+3. run the applicable deterministic result adapter;
+4. upload any validated reusable artifact;
+5. finalize the journal with its result reference, router metadata, and any
+   artifact IDs; and
+6. update the artifact manifest only for validated reusable artifacts.
+
+If a result or artifact upload succeeds but a later mutable update fails,
+recover from the immutable files and pending binding; do not repeat Gemini.
+
+If the process or VM disappears after a network attempt but before terminal
+routing metadata and the result become durable, the external call and Drive
+replacement cannot be made atomic. Preserve the pending execution as an
+unknown network outcome. Reconciliation must record that uncertainty and must
+not infer failure, reconstruct unavailable attempt details, or authorize an
+automatic retry.
 
 If a manifest is missing, enumerate and verify native artifacts for the video
-before initializing an empty manifest. Initialize an empty manifest only when
-no native artifacts exist. Do not read execution records to reconstruct an
-artifact manifest.
+before initializing an empty manifest. Do not read execution or result records
+to reconstruct an artifact manifest.
 
-Raw Drive-file replacement currently provides no atomic compare-and-set
-operation through the connected workflow. The initial release therefore adopts
-the explicit
+Raw Drive-file replacement provides no atomic compare-and-set operation. The
+initial release therefore adopts the explicit
 [single-writer-per-video policy](youtube-artifact-cache-v3-single-writer-policy.md).
 Treat it as a supported-use constraint, not technical mutual exclusion. Leases
-support crash recovery and reconciliation but do not make writer acquisition
-atomic or prove that an expired writer stopped.
+support recovery and reconciliation but do not make writer acquisition atomic
+or prove that an expired writer stopped.
 
 ## Optional disposable cache-v2 validator
 
@@ -302,10 +451,18 @@ during controlled validation.
 - Update the manifest only for changes to the searchable artifact set or its
   content-side indexing metadata. Do not update it for execution-only state
   transitions.
-- Fingerprint a canonical execution specification only after artifact search.
-  Store its lifecycle and router attempts in the separate native v3 execution
-  journal. Block identical pending or completed executions, and require a
-  documented permitted reason before retrying an identical failed execution.
+- Construct the execution binding from the actual request file and endpoint
+  only after artifact search. Preserve both exact-byte and canonical request
+  digests; use the canonical execution fingerprint for duplicate control.
+- Persist the exact successful response as an immutable result before
+  completing the journal. Never substitute an artifact ID for a missing result
+  record or infer reusable coverage from network success.
+- Permit transcript artifacts only through the transcript-v1 adapter. Derive
+  coverage from validated output and the bound clip rather than metadata
+  supplied to a generic artifact builder.
+- Block identical pending or completed executions by default. Require
+  documented authorization before any permitted retry of a failed, abandoned,
+  unknown-outcome, or completed-but-unusable execution.
 - Enforce the supported single-writer-per-normalized-video workflow described
   in the dedicated policy. Keep writer ownership, leases, handoffs, and
   abandonment in the execution journal rather than the artifact manifest.
@@ -321,6 +478,15 @@ reconstruction, placing execution-oriented metadata and references in the
 artifact manifest, and including execution provenance in artifact identity.
 These are release blockers, not accepted design changes.
 
+The audited checkpoint `b8598e4` corrected those storage boundaries but left a
+second set of release blockers: the reserved execution is not bound to the
+router's actual request file and endpoint; a completed execution may contain no
+durable result; the generic artifact builder accepts unvalidated transcript
+content and caller-asserted coverage; durable cooldowns are not enforced; and
+writer, attempt, and routing histories accept contradictory states. Correct
+these boundaries without moving execution fields back into artifacts or the
+manifest.
+
 ## Test direction
 
 Do not add a byte-for-byte golden request or fixed request-hash regression test
@@ -330,24 +496,39 @@ artifact discovery.
 Cache v3 should instead test:
 
 - clean-slate operation with no v2 records or fixtures;
-- deterministic execution fingerprints;
+- formatting-independent canonical execution fingerprints plus exact-byte
+  transport binding;
+- rejection of mismatched request files, video URIs, clip bounds, endpoints,
+  models, routes, and absent pending bindings before credential selection;
+- immutable result identity, Drive reference, integrity verification, and
+  recovery after a mutable-update failure;
+- rejection of completed executions without a durable result reference;
+- transcript-v1 extraction, timestamp and clip-bound validation, completion
+  and truncation consistency, and mechanically derived valid coverage;
+- preservation without reuse of malformed successful results;
 - artifact identity that remains stable across different execution provenance;
 - artifact compatibility;
 - interval coverage, composition, and gap detection;
 - manifest-first planning followed by selected-artifact verification;
 - missing-manifest reconstruction before empty initialization;
-- durable router-attempt history and failed-retry authorization;
-- pending expiry and reconciliation;
+- durable router-attempt history, cooldown enforcement, and retry
+  authorization;
+- pending expiry, unknown-outcome reconciliation, and no automatic retry after
+  an ambiguous crash window;
 - same-video writer blocking, read-only concurrency, different-video
-  independence, writer handoff, and abandonment under the documented
+  independence, unique owner generation, recipient-constrained handoff,
+  chronological writer history, and abandonment under the documented
   single-writer policy;
+- chronological execution and attempt history plus consistent HTTP status,
+  classification, selected bucket, and terminal routing state;
 - execution-journal recovery independent of manifest recovery;
 - manifest entries restricted to artifact-discovery, compatibility, coverage,
   and integrity fields;
 - byte-stable manifests across execution-only pending, failure, fallback,
-  retry, cooldown, abandonment, and no-artifact completion changes;
-- one-way execution-to-artifact references with no artifact or manifest
-  back-reference;
+  retry, cooldown, abandonment, result-only completion, and malformed-result
+  preservation;
+- one-way execution-to-result and execution-to-artifact references with no
+  result, artifact, or manifest back-reference;
 - replacement of tests that currently require manifest execution references
   or other execution-derived manifest fields;
 - manifest lookup and update behavior; and
@@ -366,6 +547,8 @@ behavior and removable isolation from production v3 code.
 - No claim of Drive-backed cross-session mutual exclusion, at-most-once
   execution when the single-writer policy is violated, or exactly-once
   execution.
+- No claim that Drive can reconstruct an HTTP attempt or response lost when a
+  process or VM disappears before terminal router output becomes durable.
 - No deletion of cache-v2 data as part of the v3 feature branch; retire it
   separately after validation.
 - No live Gemini quota consumption merely to test the index design.

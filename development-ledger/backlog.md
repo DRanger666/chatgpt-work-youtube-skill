@@ -54,17 +54,19 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
-## Closed items
+## Active cache-v3 release correction items
 
 ### LEDGER-010 — Restore Gemini execution requirements in cache v3
 
-- Status: Completed
+- Status: Reopened — release blocker
 - Type: Design correction and implementation
 - Layer: Gemini execution lifecycle and persistent research state
 - Evidence:
-  - LEDGER-004 requires every Gemini network attempt to remain observable,
+  - LEDGER-004 requires returned Gemini network attempts to remain observable,
     identical failed requests to require a documented retry reason, and prior
-    attempt history to survive retries.
+    attempt history to survive retries. The corrected design separately
+    preserves an unknown outcome when a VM disappears before terminal metadata
+    becomes durable.
   - Commit `763d4cf` removed the workflow that consumed `ROUTING_JSON`, required
     documented authorization for identical failed retries, and preserved
     appended attempt history.
@@ -74,14 +76,16 @@ feature, investigation, design, and refinement work.
     failed execution-only history.
   - Drive replacement exposes no atomic compare-and-set operation, so leases
     cannot enforce mutual exclusion across Work sessions.
-- Goal: Add a native v3 Gemini execution journal without restoring cache-v2
-  schemas, filenames, lookup, migration, or fallback behavior. Keep every
-  execution-oriented field in this separate data structure and link successful
-  executions to produced artifact IDs only in the execution-to-artifact
-  direction. Support one write-capable session per normalized video ID and
-  describe that boundary as an operating policy rather than a Drive-enforced
-  concurrency guarantee.
-- Completed work:
+  - The audit of checkpoint `b8598e4` proved that a reserved execution can
+    describe one request while the router receives another file and endpoint.
+  - The same audit completed an execution without any durable result, retried
+    before its recorded cooldown, accepted a non-recipient after handoff, and
+    accepted contradictory writer and router histories.
+- Goal: Preserve the separate native v3 journal while binding it to the exact
+  router input, requiring a durable immutable result for every successful
+  response, enforcing cooldown and retry rules, and validating the writer and
+  routing lifecycle as one coherent state machine.
+- Preserved baseline work:
   - [x] Stored pending, completed, and failed executions separately from the
         artifact-discovery manifest.
   - [x] Consumed and persisted safe `ROUTING_JSON` attempts for success and
@@ -106,13 +110,25 @@ feature, investigation, design, and refinement work.
         against the native v3 execution lifecycle.
   - [x] Summarized the dedicated single-writer policy in `SKILL.md` and
         `references/contracts.md` without redefining it.
-- Outcome:
+- Prior checkpoint outcome:
   - The native journal consumes unmodified `gemini_request.py` routing output
     and preserves individual primary, fallback, failure, cooldown, and retry
     records without importing cache v2.
   - The per-video writer lifecycle supports renewal, release, handoff,
     expiry reconciliation, and abandonment while explicitly retaining Drive's
     non-atomic concurrency limitation.
+- Required release correction:
+  - [ ] Derive the pending execution from the actual request file and endpoint,
+        storing both exact-byte and canonical request digests.
+  - [ ] Make the router verify the pending binding before credential selection.
+  - [ ] Persist successful response bytes as an immutable result and require a
+        result reference before completion.
+  - [ ] Represent a crash before durable terminal output as an unknown network
+        outcome that cannot retry automatically.
+  - [ ] Enforce durable cooldowns, retry authorization, event-specific fields,
+        chronology, HTTP/classification consistency, selected-bucket
+        correspondence, generated non-reused owner IDs, and named handoffs.
+  - [ ] Add offline tests for every audited counterexample before closing.
 - Implementation commits: `49416da`, `2fd89bd`, `44244aa`.
 - Related documents:
   - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
@@ -121,7 +137,7 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-009 — Correct per-video artifact manifests
 
-- Status: Completed
+- Status: Reopened — release blocker
 - Type: Design and implementation
 - Layer: Google Drive research storage
 - Problem: Drive cache records named by execution-request fingerprints could
@@ -133,6 +149,11 @@ feature, investigation, design, and refinement work.
   without inheriting cache-v2 schemas or lookup behavior. Keep the manifest
   exclusively optimized for artifact discovery, compatibility filtering,
   coverage planning, and integrity verification.
+- Reopened audit evidence:
+  - Checkpoint `b8598e4` accepted arbitrary content under the
+    `gemini-transcript` version `1` contract together with caller-asserted full
+    coverage. The manifest would then treat that unverified coverage as a valid
+    search result.
 - Initial implementation evidence:
   - [x] Fixed native manifest and artifact schema version `1`.
   - [x] Fixed the no-space `YouTubeArtifactCacheV3` namespace and deterministic
@@ -166,12 +187,18 @@ feature, investigation, design, and refinement work.
         rewriting Gemini execution records.
 - Initial implementation commits: `7b8a8ef`, `763d4cf`.
 - Correction commits: `61a60ef`, `2fd89bd`, `44244aa`.
+- Required release correction:
+  - [ ] Keep immutable execution results outside the manifest.
+  - [ ] Permit manifest entries only for artifacts emitted by a validated
+        contract adapter.
+  - [ ] Prove that malformed or inconsistent transcript results create no
+        manifest coverage while their immutable result remains durable.
 - Related document:
   [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
 
 ### LEDGER-008 — Correct artifact-first request planning
 
-- Status: Completed
+- Status: Reopened — release blocker
 - Type: Design and implementation
 - Layer: Research artifact retrieval
 - Problem: An exact request fingerprint could prevent a byte-identical API
@@ -179,6 +206,11 @@ feature, investigation, design, and refinement work.
   usable or composable coverage for the current task.
 - Goal: Search by video, artifact kind, compatibility, and interval coverage;
   construct Gemini requests only for uncovered material.
+- Reopened audit evidence:
+  - Checkpoint `b8598e4` did not bind a planned request to the file and endpoint
+    actually supplied to the router.
+  - Caller-asserted transcript coverage could suppress legitimate uncovered
+    intervals without the transcript contract ever being validated.
 - Verified initial work:
   - [x] Defined exact contract, timestamp-basis, and language-policy
         compatibility with normalized half-open millisecond intervals.
@@ -187,8 +219,8 @@ feature, investigation, design, and refinement work.
   - [x] Returned only uncovered intervals for new request construction.
   - [x] Required explicit agent approval before reusing arbitrary analysis
         artifacts by task description.
-  - [x] Kept canonical execution fingerprints as provenance and last-moment
-        pending/completed duplicate guards.
+  - [x] Kept canonical execution fingerprints as execution audit identities
+        and last-moment pending/completed duplicate guards.
   - [x] Kept production v3 retrieval free of cache-v2 imports, fallbacks,
         migration, and legacy fixtures.
 - Completed corrections:
@@ -203,8 +235,17 @@ feature, investigation, design, and refinement work.
         two-phase workflow.
 - Initial implementation commits: `9bff861`, `763d4cf`.
 - Correction commits: `61a60ef`, `2fd89bd`, `44244aa`.
+- Required release correction:
+  - [ ] Bind request planning, journal reservation, and router submission to one
+        validated execution identity.
+  - [ ] Add the transcript-v1 result adapter and derive valid coverage from the
+        bound clip and validated completion state.
+  - [ ] Re-run the complete artifact-first coverage matrix with malformed,
+        truncated, mismatched-clip, and durable-result-only cases.
 - Related document:
   [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
+
+## Closed items
 
 ### LEDGER-007 — Correct transcript-mode edge cases
 
