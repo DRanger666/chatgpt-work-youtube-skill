@@ -165,8 +165,10 @@ Implemented in
 - Both credentials returned HTTP 200 from the Gemini model-metadata endpoint.
 - No generation request or quota stress test was used for credential
   validation.
-- Project independence remains a separately tracked AI Studio ownership check;
-  successful authentication alone does not reveal the owning project.
+- The user confirmed that the credentials were created in separately created
+  Google AI Studio projects under different accounts, not in a shared or
+  imported project. Treat them as independent quota buckets without attempting
+  a quota-exhaustion probe.
 
 ## Sources
 

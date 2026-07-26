@@ -54,23 +54,24 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
+## Closed items
+
 ### LEDGER-005 — Confirm independent Gemini project ownership
 
-- Status: Planned
+- Status: Completed
 - Type: Refinement
 - Layer: Gemini API
-- Evidence: Both credentials authenticate successfully and were supplied from
-  different Google accounts. The model-metadata endpoint does not expose their
-  owning project IDs, while Gemini quota is enforced per project.
-- Next check:
-  - [ ] Confirm each credential's project name or ID in its Google AI Studio
-        account.
-  - [ ] Record only the non-secret `primary` and `fallback` ownership mapping.
-  - [ ] Do not intentionally exhaust either project to infer independence.
+- Evidence: The user confirmed that the primary and fallback credentials were
+  created under different Google accounts in separately created Google AI
+  Studio projects, rather than in an imported or shared project. Both
+  credentials also authenticate successfully.
+- Outcome:
+  - [x] Treat `primary` and `fallback` as independent project quota buckets.
+  - [x] Keep account names, project identifiers, and credentials out of the
+        repository.
+  - [x] Do not exhaust either project merely to prove quota independence.
 - Related document:
   [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
-
-## Closed items
 
 ### LEDGER-004 — Add interactive Gemini quota-pool routing
 
