@@ -201,6 +201,31 @@ class ArtifactCacheV3StorageTests(unittest.TestCase):
             {first["artifactId"], second["artifactId"]},
         )
 
+    def test_rebuild_refuses_to_initialize_an_empty_manifest(self):
+        with self.assertRaisesRegex(
+            artifact_cache.CacheV3Error,
+            "without native artifacts",
+        ):
+            artifact_cache.rebuild_manifest(
+                VIDEO_ID,
+                [],
+                {},
+                updated_at=LATER,
+            )
+
+    def test_rebuild_requires_an_artifact_for_the_requested_video(self):
+        _, path = self.create_artifact()
+        with self.assertRaisesRegex(
+            artifact_cache.CacheV3Error,
+            "for this video",
+        ):
+            artifact_cache.rebuild_manifest(
+                "lhSq1RzDcZg",
+                [path],
+                {path.name: "drive-file-1"},
+                updated_at=LATER,
+            )
+
     def test_partial_result_is_represented_only_by_valid_coverage(self):
         artifact, _ = self.create_artifact(0, 420_000)
 
@@ -336,6 +361,22 @@ class ArtifactCacheV3SearchTests(unittest.TestCase):
             [artifact["artifactId"]],
         )
         self.assertEqual(planned["verificationStatus"], "fetch_required")
+
+    def test_verification_replans_when_manifest_changed_after_search(self):
+        stale_plan = self.plan()
+        artifact, _ = self.add_artifact(0, 600_000)
+
+        refreshed_plan = self.verify(stale_plan)
+
+        self.assertEqual(
+            refreshed_plan["artifactIdsToFetch"],
+            [artifact["artifactId"]],
+        )
+        self.assertEqual(refreshed_plan["verificationStatus"], "fetch_required")
+        self.assertEqual(
+            self.verify(refreshed_plan)["verificationStatus"],
+            "verified",
+        )
 
     def test_containing_artifact_satisfies_smaller_interval(self):
         self.add_artifact(0, 600_000)
@@ -500,6 +541,33 @@ class ArtifactCacheV3SearchTests(unittest.TestCase):
             replanned["newRequestIntervals"],
             [interval(0, 600_000)],
         )
+
+    def test_repeated_verification_never_reselects_prior_stale_entries(self):
+        artifacts = [
+            self.add_artifact(0, 600_000, text=f"candidate-{index}")
+            for index in range(3)
+        ]
+        paths_by_id = {
+            artifact["artifactId"]: path for artifact, path in artifacts
+        }
+
+        first_plan = self.plan()
+        first_id = first_plan["artifactIdsToFetch"][0]
+        paths_by_id[first_id].unlink()
+        second_plan = self.verify(first_plan)
+
+        second_id = second_plan["artifactIdsToFetch"][0]
+        self.assertNotEqual(second_id, first_id)
+        paths_by_id[second_id].unlink()
+        third_plan = self.verify(second_plan)
+
+        self.assertEqual(
+            {item["artifactId"] for item in third_plan["staleManifestEntries"]},
+            {first_id, second_id},
+        )
+        self.assertNotIn(first_id, third_plan["artifactIdsToFetch"])
+        self.assertNotIn(second_id, third_plan["artifactIdsToFetch"])
+        self.assertEqual(self.verify(third_plan)["verificationStatus"], "verified")
 
 
 class ArtifactCacheV3ChunkPlanningTests(unittest.TestCase):

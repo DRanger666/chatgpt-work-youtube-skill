@@ -538,6 +538,12 @@ def rebuild_manifest(
     drive_file_ids,
     updated_at=None,
 ):
+    artifact_paths = list(artifact_paths)
+    if not artifact_paths:
+        raise CacheV3Error(
+            "Cannot rebuild a manifest without native artifacts; "
+            "initialize only after confirming Drive has none"
+        )
     manifest = new_manifest(video_source, updated_at=updated_at)
     for path in sorted((Path(item).resolve() for item in artifact_paths), key=str):
         artifact = load_json(path)
@@ -553,6 +559,10 @@ def rebuild_manifest(
             drive_file_id,
             path,
             updated_at=updated_at,
+        )
+    if not manifest["artifacts"]:
+        raise CacheV3Error(
+            "Cannot rebuild a manifest without native artifacts for this video"
         )
     manifest["updatedAt"] = updated_at or utc_now()
     validate_manifest(manifest)
@@ -866,6 +876,25 @@ def validate_search_plan(plan):
         "not_required",
     }:
         raise CacheV3Error("Unsupported search verification status")
+    if not isinstance(plan["staleManifestEntries"], list):
+        raise CacheV3Error("staleManifestEntries must be an array")
+    for item in plan["staleManifestEntries"]:
+        require_exact_fields(
+            item,
+            {"artifactId", "driveFileId", "fileName", "reason"},
+            set(),
+            "stale manifest entry",
+        )
+        validate_sha256(item["artifactId"], "stale artifact ID")
+        for field in ("driveFileId", "fileName"):
+            if item[field] is not None and (
+                not isinstance(item[field], str) or not item[field]
+            ):
+                raise CacheV3Error(
+                    f"Stale manifest entry {field} must be null or non-empty"
+                )
+        if not isinstance(item["reason"], str) or not item["reason"]:
+            raise CacheV3Error("Stale manifest entry reason must be non-empty")
     return plan
 
 
@@ -876,6 +905,35 @@ def verify_search_plan(manifest, artifact_directory: Path, query, plan):
     plan = validate_search_plan(dict(plan))
     if manifest["videoId"] != query["videoId"] or plan["videoId"] != query["videoId"]:
         raise CacheV3Error("Manifest, query, and search plan video IDs differ")
+
+    stale_by_id = {
+        item["artifactId"]: item
+        for item in plan["staleManifestEntries"]
+    }
+    current_plan = plan_artifact_search(
+        manifest,
+        raw_query,
+        excluded_artifact_ids=set(stale_by_id),
+    )
+    semantic_fields = {
+        "videoId",
+        "kind",
+        "coverageStatus",
+        "coverageCases",
+        "requestedCoverage",
+        "coveredIntervals",
+        "uncoveredIntervals",
+        "newRequestIntervals",
+        "selectedArtifacts",
+        "incompatibleArtifacts",
+        "reviewCandidates",
+        "requiresAgentReview",
+    }
+    if any(plan[field] != current_plan[field] for field in semantic_fields):
+        current_plan["staleManifestEntries"] = [
+            stale_by_id[artifact_id] for artifact_id in sorted(stale_by_id)
+        ]
+        return current_plan
 
     planned_ids = {
         item["artifactId"] for item in plan["selectedArtifacts"]
@@ -922,13 +980,17 @@ def verify_search_plan(manifest, artifact_directory: Path, query, plan):
         validate_search_plan(verified)
         return verified
 
-    excluded = {item["artifactId"] for item in stale}
+    for item in stale:
+        stale_by_id[item["artifactId"]] = item
+    excluded = set(stale_by_id)
     replanned = plan_artifact_search(
         manifest,
         raw_query,
         excluded_artifact_ids=excluded,
     )
-    replanned["staleManifestEntries"] = stale
+    replanned["staleManifestEntries"] = [
+        stale_by_id[artifact_id] for artifact_id in sorted(stale_by_id)
+    ]
     return replanned
 
 

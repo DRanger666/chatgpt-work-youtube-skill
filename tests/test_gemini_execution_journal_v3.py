@@ -1,10 +1,15 @@
+import argparse
+import contextlib
 import importlib.util
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +32,14 @@ JOURNAL_SPEC = importlib.util.spec_from_file_location(
 )
 journal = importlib.util.module_from_spec(JOURNAL_SPEC)
 JOURNAL_SPEC.loader.exec_module(journal)
+
+ROUTER_PATH = SCRIPTS / "gemini_request.py"
+ROUTER_SPEC = importlib.util.spec_from_file_location(
+    "gemini_request",
+    ROUTER_PATH,
+)
+gemini_request = importlib.util.module_from_spec(ROUTER_SPEC)
+ROUTER_SPEC.loader.exec_module(gemini_request)
 
 VIDEO_ID = "uSibwB2TQC4"
 SECOND_VIDEO_ID = "lhSq1RzDcZg"
@@ -436,6 +449,104 @@ class ExecutionLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(finished["artifactIds"], ["b" * 64])
         self.assertEqual(finished["modelVersion"], "gemini-test-001")
+
+    def test_real_router_output_is_accepted_without_translation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            request_path = root / "request.json"
+            response_path = root / "response.json"
+            routing_path = root / "routing.json"
+            state_path = root / "state.json"
+            request_path.write_text('{"contents":[]}\n', encoding="utf-8")
+            responses = [
+                (
+                    429,
+                    {"Retry-After": "30"},
+                    json.dumps(
+                        {
+                            "error": {
+                                "code": 429,
+                                "status": "RESOURCE_EXHAUSTED",
+                                "message": "Quota exhausted",
+                            }
+                        }
+                    ).encode("utf-8"),
+                ),
+                (
+                    200,
+                    {},
+                    json.dumps(
+                        {
+                            "candidates": [
+                                {
+                                    "content": {
+                                        "parts": [{"text": '{"ok":true}'}]
+                                    },
+                                    "finishReason": "STOP",
+                                }
+                            ],
+                            "modelVersion": "test-model",
+                            "usageMetadata": {"totalTokenCount": 1},
+                        }
+                    ).encode("utf-8"),
+                ),
+            ]
+
+            def fake_send(endpoint, api_key, request_bytes, timeout_seconds):
+                return responses.pop(0)
+
+            args = argparse.Namespace(
+                request=str(request_path),
+                response=str(response_path),
+                routing_metadata=str(routing_path),
+                state=str(state_path),
+                endpoint="https://example.invalid/generate",
+                timeout_seconds=1.0,
+                max_transient_retries=1,
+                base_backoff_seconds=0.0,
+                max_backoff_seconds=0.0,
+                default_cooldown_seconds=60.0,
+                default_transient_cooldown_seconds=30.0,
+                jitter_seconds=0.0,
+                no_sleep=True,
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "GEMINI_API_KEY": "test-primary",
+                    "GEMINI_API_KEY_FALLBACK": "test-fallback",
+                },
+                clear=False,
+            ):
+                with mock.patch.object(
+                    gemini_request,
+                    "send_request",
+                    fake_send,
+                ):
+                    with mock.patch.object(
+                        gemini_request.random,
+                        "uniform",
+                        return_value=0.0,
+                    ):
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            result = gemini_request.run(args)
+
+            execution = self.start()
+            finished = journal.finish_execution(
+                self.state,
+                execution["executionId"],
+                OWNER_A,
+                "completed",
+                json.loads(routing_path.read_text(encoding="utf-8")),
+                finished_at=LATER,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            [item["classification"] for item in finished["routerAttempts"]],
+            ["rate_limited", "success"],
+        )
+        self.assertEqual(finished["selectedBucket"], "fallback")
 
     def test_no_available_bucket_failure_preserves_cooldown_without_fake_attempt(self):
         execution = self.start()
