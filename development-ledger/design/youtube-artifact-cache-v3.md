@@ -2,8 +2,10 @@
 
 ## Status
 
-Approved clean-slate direction. Implement only on a dedicated feature branch,
-with the artifact-search and manifest contracts reviewed together.
+Approved clean-slate direction with a release correction required. The initial
+feature-branch implementation must not be merged or used for live v3 data until
+the artifact-search, manifest, and Gemini execution contracts satisfy this
+corrected design together.
 
 ## Problem
 
@@ -42,8 +44,40 @@ Design cache v3 independently of cache v2:
 - Regenerate the small amount of useful prior material natively in v3 when
   that is simpler or safer than preserving compatibility.
 
-Cache-v2 records may remain temporarily as read-only validation evidence, but
-they impose no requirements on v3 identity, storage, retrieval, or lifecycle.
+Cache-v2 records may remain temporarily as read-only validation evidence. They
+impose no requirements on v3 schemas, filenames, artifact lookup, migration,
+fallback, or native record representation.
+
+This clean-slate boundary does not cancel the Gemini execution requirements
+established by LEDGER-004. Those requirements govern whether and how Gemini may
+be called; they remain necessary even though their first implementation shared
+the cache-v2 request record.
+
+## Gemini execution requirements retained from LEDGER-004
+
+The v3 workflow must retain these exact Gemini requirements:
+
+1. Complete artifact discovery before selecting a Gemini credential.
+2. Keep at most one Gemini video request in flight within a workflow.
+3. Consume the safe routing metadata emitted by `gemini_request.py`.
+4. Persist every Gemini network attempt, including bucket alias, timestamps,
+   HTTP status, classification, error status, retry delay, cooldown, and
+   backoff when present.
+5. Preserve prior attempt history across primary/fallback routing and every
+   later retry.
+6. Permit an identical failed Gemini request to run again only when a
+   documented retry reason is supplied.
+7. Do not retry `INVALID_ARGUMENT` or another terminal request failure
+   unchanged.
+8. Persist the failed attempt history and earliest cooldown when no Gemini
+   project bucket is available.
+9. Finalize every pending Gemini execution as completed or failed using the
+   router metadata; do not replace detailed attempt history with only a
+   logical status.
+
+These are Gemini execution requirements, not cache-v2 compatibility
+requirements. Cache v3 must implement them through native v3 records without
+importing or calling `gemini_cache.py`.
 
 ## Design A — Artifact-first retrieval and coverage planning
 
@@ -59,8 +93,8 @@ Before constructing a Gemini request:
 6. Identify truncated regions, incompatible material, and uncovered gaps.
 7. Reuse complete or composable artifacts and generate only the missing
    intervals.
-8. Immediately before a network request, use a canonical execution
-   fingerprint as an idempotency check.
+8. Immediately before a network request, consult the durable Gemini execution
+   ledger using a canonical execution fingerprint.
 
 An exact interval is not a transcript identity. A transcript covering
 `0–1800s` can satisfy a request for `300–900s`, and multiple overlapping chunks
@@ -79,6 +113,8 @@ not drive the initial artifact search.
 - Incompatible contracts or language policies are not silently reused.
 - Only uncovered intervals produce new Gemini requests.
 - An identical pending or completed execution is not submitted twice.
+- An identical failed execution is not submitted again without a documented
+  permitted retry reason.
 
 ## Design B — Per-video manifest and artifact storage
 
@@ -121,6 +157,54 @@ normalization.
 - Updating a manifest does not rewrite immutable artifact content.
 - A clean v3 namespace works correctly when no cache-v2 data exists.
 - Manifests and artifacts contain no legacy-only compatibility fields.
+- The same reusable artifact content retains the same artifact ID regardless of
+  which Gemini execution produced or verified it.
+
+## Design C — Durable Gemini execution ledger
+
+The per-video artifact manifest is a discovery index. It must not also be the
+only durable Gemini execution ledger.
+
+Use separate native v3 execution records for:
+
+- the canonical execution fingerprint and requested coverage;
+- pending, completed, and failed lifecycle state;
+- pending ownership, expiry, and reconciliation evidence;
+- the documented reason for an identical failed-request retry;
+- every safe router attempt emitted through `ROUTING_JSON`;
+- final status, selected bucket alias, model and usage metadata when present;
+  and
+- references to any artifacts produced by the execution.
+
+Artifact-manifest reconstruction must not erase or reset execution records,
+failed attempts, retry reasons, or attempt numbering. Reconstruct artifact
+discovery from native artifacts and recover Gemini execution history directly
+from its separate native execution records.
+
+Do not include execution provenance in immutable artifact content or artifact
+identity. Derive an artifact ID from the reusable artifact material and its
+compatibility metadata. Keep execution references in the manifest and
+execution ledger so the same reusable artifact does not receive a different
+identity merely because it was produced or verified by another execution.
+
+Before calling Gemini, complete this order:
+
+1. Plan coverage from manifest metadata.
+2. Fetch and integrity-check only the artifacts selected for reuse or explicit
+   analysis review.
+3. Replan if a selected artifact is missing, stale, or invalid.
+4. Consult and update the durable execution ledger.
+5. Select a Gemini credential and execute only the remaining uncovered work.
+
+If a manifest is missing, enumerate and verify native artifacts for the video
+before initializing an empty manifest. Initialize an empty manifest only when
+no native artifacts exist.
+
+Raw Drive-file replacement currently provides no atomic compare-and-set
+operation through the connected workflow. Do not claim cross-session
+at-most-once execution until the release adopts and documents either an
+explicit single-writer rule with pending-lease reconciliation or a storage
+operation that supplies the required atomicity.
 
 ## Optional disposable cache-v2 validator
 
@@ -151,18 +235,26 @@ during controlled validation.
   as exact mechanical compatibility dimensions. Do not silently coerce them.
 - Require analysis artifacts to carry a task description and require explicit
   agent approval of an artifact ID before automatic interval reuse.
-- Derive artifact IDs from canonical artifact content and store a separate
-  SHA-256 of the exact immutable JSON bytes in the manifest.
+- Derive artifact IDs from canonical reusable artifact content and
+  compatibility metadata. Keep execution provenance outside immutable artifact
+  content and store a separate SHA-256 of the exact immutable JSON bytes in the
+  manifest.
 - Upload an immutable artifact before replacing the mutable manifest. Rebuild a
   missing or stale manifest from verified native artifacts and Drive file IDs.
 - Fingerprint a canonical execution specification only after artifact search.
-  Block identical pending or completed executions; retain failed attempts and
-  permit a separately identified retry without automatic looping.
+  Store its lifecycle and router attempts in the separate native v3 execution
+  ledger. Block identical pending or completed executions, and require a
+  documented permitted reason before retrying an identical failed execution.
 - Do not implement the optional v2 validator. Native offline fixtures cover the
   required storage, retrieval, truncation, integrity, and idempotency evidence
   without introducing a disposable dependency.
 
-No governing-design deviation was required.
+The initial implementation deviated from this corrected design by using the
+artifact manifest as the only durable store for pending and failed execution
+state, not consuming `ROUTING_JSON`, allowing identical failed executions to
+restart without a reason, losing pending and failed history during manifest
+reconstruction, and including execution provenance in artifact identity. These
+are release blockers, not accepted design changes.
 
 ## Test direction
 
@@ -174,8 +266,14 @@ Cache v3 should instead test:
 
 - clean-slate operation with no v2 records or fixtures;
 - deterministic execution fingerprints;
-- artifact identity and compatibility;
+- artifact identity that remains stable across different execution provenance;
+- artifact compatibility;
 - interval coverage, composition, and gap detection;
+- manifest-first planning followed by selected-artifact verification;
+- missing-manifest reconstruction before empty initialization;
+- durable router-attempt history and failed-retry authorization;
+- pending expiry and reconciliation;
+- execution-ledger recovery independent of manifest recovery;
 - manifest lookup and update behavior; and
 - isolation from legacy lookup and schema assumptions.
 

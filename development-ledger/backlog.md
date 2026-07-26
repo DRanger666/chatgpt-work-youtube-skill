@@ -54,11 +54,44 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
-## Closed items
+### LEDGER-010 — Restore Gemini execution requirements in cache v3
 
-### LEDGER-009 — Add per-video artifact manifests
+- Status: Confirmed
+- Type: Design correction and implementation
+- Layer: Gemini execution lifecycle and persistent research state
+- Evidence:
+  - LEDGER-004 requires every Gemini network attempt to remain observable,
+    identical failed requests to require a documented retry reason, and prior
+    attempt history to survive retries.
+  - Commit `763d4cf` removed the workflow that consumed `ROUTING_JSON`, required
+    documented authorization for identical failed retries, and preserved
+    appended attempt history.
+  - The initial v3 implementation stores pending and failed execution state only
+    in the artifact manifest. Completed provenance is also copied into
+    artifacts, but manifest reconstruction still cannot recover pending or
+    failed execution-only history.
+- Goal: Add a native v3 Gemini execution ledger without restoring cache-v2
+  schemas, filenames, lookup, migration, or fallback behavior.
+- Next check:
+  - [ ] Store pending, completed, and failed executions separately from the
+        artifact-discovery manifest.
+  - [ ] Consume and persist safe `ROUTING_JSON` attempts for success and
+        failure.
+  - [ ] Require a documented permitted reason before an identical failed
+        request can run again.
+  - [ ] Preserve attempt history and numbering through retries and manifest
+        reconstruction.
+  - [ ] Add pending expiry and reconciliation without claiming unsupported
+        cross-session atomicity.
+  - [ ] Re-run LEDGER-004 routing, failure, cooldown, and retry-history tests
+        against the native v3 execution lifecycle.
+- Related documents:
+  - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
+  - [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
 
-- Status: Completed
+### LEDGER-009 — Correct per-video artifact manifests
+
+- Status: Confirmed
 - Type: Design and implementation
 - Layer: Google Drive research storage
 - Problem: Drive cache records named by execution-request fingerprints could
@@ -66,9 +99,9 @@ feature, investigation, design, and refinement work.
   material associated with one video.
 - Goal: Add one predictable per-video manifest in a clean v3 Drive namespace
   that indexes immutable artifacts, compatibility metadata, valid coverage,
-  integrity hashes, and execution provenance without inheriting cache-v2
+  integrity hashes, and execution references without inheriting cache-v2
   schemas or lookup behavior.
-- Completed work:
+- Verified initial work:
   - [x] Fixed native manifest and artifact schema version `1`.
   - [x] Fixed the no-space `YouTubeArtifactCacheV3` namespace and deterministic
         `<videoId>--manifest.json` lookup.
@@ -79,18 +112,23 @@ feature, investigation, design, and refinement work.
   - [x] Proved clean-slate operation without cache-v2 data or fixtures.
   - [x] Rejected the optional v2 validator because native offline evidence was
         sufficient.
-- Outcome:
-  - Missing indexes can be rebuilt from verified native artifacts and Drive
-    file IDs.
-  - Thirty-one native v3 tests and all fifteen retained repository tests pass.
-  - No Drive cache state, Gemini quota, v2 data, or installed skill was changed.
-- Implementation commits: `7b8a8ef`, `763d4cf`.
+- Release corrections:
+  - [ ] Keep execution provenance outside immutable artifact content and
+        artifact identity.
+  - [ ] Keep durable Gemini executions outside the artifact-discovery manifest.
+  - [ ] Rebuild a missing manifest from existing native artifacts before
+        initializing an empty manifest.
+  - [ ] Reconstruct artifact and execution state from their respective native
+        records without losing pending or failed execution history.
+  - [ ] Resolve the cross-session writer policy before claiming at-most-once
+        execution.
+- Initial implementation commits: `7b8a8ef`, `763d4cf`.
 - Related document:
   [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
 
-### LEDGER-008 — Search artifacts before constructing requests
+### LEDGER-008 — Correct artifact-first request planning
 
-- Status: Completed
+- Status: Confirmed
 - Type: Design and implementation
 - Layer: Research artifact retrieval
 - Problem: An exact request fingerprint could prevent a byte-identical API
@@ -98,7 +136,7 @@ feature, investigation, design, and refinement work.
   usable or composable coverage for the current task.
 - Goal: Search by video, artifact kind, compatibility, and interval coverage;
   construct Gemini requests only for uncovered material.
-- Completed work:
+- Verified initial work:
   - [x] Defined exact contract, timestamp-basis, and language-policy
         compatibility with normalized half-open millisecond intervals.
   - [x] Implemented exact, containing, composite, overlapping, truncated,
@@ -110,15 +148,21 @@ feature, investigation, design, and refinement work.
         pending/completed duplicate guards.
   - [x] Kept production v3 retrieval free of cache-v2 imports, fallbacks,
         migration, and legacy fixtures.
-- Outcome:
-  - Compatible artifacts compose mechanically; truncated artifacts contribute
-    only confirmed valid coverage.
-  - Request JSON is not constructed until artifact search identifies a genuine
-    gap.
-  - Canonical fingerprint tests avoid a golden raw-request hash.
-- Implementation commits: `9bff861`, `763d4cf`.
+- Release corrections:
+  - [ ] Plan candidate coverage from the per-video manifest before downloading
+        artifact files.
+  - [ ] Fetch and integrity-check only selected reuse or analysis-review
+        candidates, then replan around stale material.
+  - [ ] Consult the separate Gemini execution ledger only after artifact
+        coverage planning and before credential selection.
+  - [ ] Re-run exact, containing, composite, overlapping, truncated,
+        incompatible, stale, and missing-coverage tests through the corrected
+        two-phase workflow.
+- Initial implementation commits: `9bff861`, `763d4cf`.
 - Related document:
   [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
+
+## Closed items
 
 ### LEDGER-007 — Correct transcript-mode edge cases
 
