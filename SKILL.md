@@ -56,6 +56,26 @@ For `research-video` and `research-videos`, add `--structured-only` to avoid emi
 
 Do not assume a YouTube Data API key can retrieve unavailable captions. Its caption-download operation normally requires permission to edit the video.
 
+## Request exact wording from Gemini
+
+When captions are absent or inadequate and the task needs source wording, use
+the tested transcript-only request instead of an analysis prompt:
+
+```sh
+python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
+  --video-url VIDEO_URL \
+  --start-seconds START \
+  --end-seconds END \
+  --transcript-only \
+  --output REQUEST_JSON
+```
+
+This mode requests only audible linguistic content in the original language,
+uses fixed full-video timestamp strings, and defaults to the tested
+8192-token output allowance. For a long video, use the existing chunk planner
+with 600-second chunks and a four-second overlap. Cache and route every chunk
+through the normal Gemini workflow.
+
 ## Run a mandatory Gemini cache transaction
 
 Perform these steps for every Gemini call, including chunk synthesis:

@@ -94,6 +94,17 @@ Use this input structure:
 
 Google documents `startOffset` and `endOffset` as seconds ending in `s`. Keep the prompt after the video part.
 
+### Transcript-only request
+
+Pass `--transcript-only` to `scripts/build_gemini_chunk_request.py` when the
+workflow needs Gemini to transcribe rather than analyze a supplied interval.
+The builder uses the prompt and strict JSON schema validated in the July 2026
+captionless-video trials and defaults to `8192` output tokens.
+
+For long transcripts, use the existing planner with
+`--chunk-seconds 600 --overlap-seconds 4`. Keep the generated full-video
+timestamps when reconciling the overlap.
+
 ## Interactive Gemini quota pool
 
 The pool contains at most two aliases:

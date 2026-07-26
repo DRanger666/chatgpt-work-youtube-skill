@@ -42,6 +42,9 @@ no usable captions. Gemini's
 fills that gap for captionless videos, visual verification, scene-level
 questions, and whole-video understanding.
 
+When exact source wording is needed, the request builder also has an explicit
+transcript-only mode that prevents a broad audiovisual-analysis response.
+
 Long videos are analyzed in timestamp-bounded chunks. Every Gemini request is
 fingerprinted and checked against persistent cache before it runs. Successes,
 failures, generated information, and usage totals are saved so the same work
