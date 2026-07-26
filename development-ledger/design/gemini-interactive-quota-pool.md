@@ -154,6 +154,20 @@ Use deterministic local HTTP fixtures before live use:
 After offline tests pass, make one inexpensive validation request per
 credential. Do not stress-test quota or deliberately provoke throttling.
 
+## Implementation outcome
+
+Implemented in
+[`223380b`](https://github.com/DRanger666/chatgpt-work-youtube-skill/commit/223380bf7b508bf2536b91b07f617500f2ef3316).
+
+- Eleven offline tests cover routing, cooldown, retry, terminal failure,
+  duplicate credentials, secret-free state, cache reopening, and legacy
+  migration.
+- Both credentials returned HTTP 200 from the Gemini model-metadata endpoint.
+- No generation request or quota stress test was used for credential
+  validation.
+- Project independence remains a separately tracked AI Studio ownership check;
+  successful authentication alone does not reveal the owning project.
+
 ## Sources
 
 - Gemini rate limits:

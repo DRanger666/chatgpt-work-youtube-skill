@@ -54,25 +54,38 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
-### LEDGER-004 — Add interactive Gemini quota-pool routing
+### LEDGER-005 — Confirm independent Gemini project ownership
 
-- Status: In progress
-- Type: Feature
+- Status: Planned
+- Type: Refinement
 - Layer: Gemini API
-- Evidence: Gemini quotas are enforced per Google Cloud project. The user has
-  supplied a fallback credential from another account for interactive
-  continuity, but blind round-robin rotation would drain both projects and
-  could create retry storms.
+- Evidence: Both credentials authenticate successfully and were supplied from
+  different Google accounts. The model-metadata endpoint does not expose their
+  owning project IDs, while Gemini quota is enforced per project.
 - Next check:
-  - [ ] Add a private fallback-key credential contract.
-  - [ ] Implement primary-first, project-aware failover with cooldowns.
-  - [ ] Preserve every retry in one request-fingerprint cache record.
-  - [ ] Mock `429`, transient `5xx`, terminal `400`, and credential failures.
-  - [ ] Validate each credential once without deliberately approaching quota.
-  - [ ] Keep all long-video chunks sequential by default.
+  - [ ] Confirm each credential's project name or ID in its Google AI Studio
+        account.
+  - [ ] Record only the non-secret `primary` and `fallback` ownership mapping.
+  - [ ] Do not intentionally exhaust either project to infer independence.
 - Related document:
   [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
 
 ## Closed items
 
-No entries yet.
+### LEDGER-004 — Add interactive Gemini quota-pool routing
+
+- Status: Completed
+- Type: Feature
+- Layer: Gemini API
+- Evidence: Implemented by
+  [`223380b`](https://github.com/DRanger666/chatgpt-work-youtube-skill/commit/223380bf7b508bf2536b91b07f617500f2ef3316).
+- Completed checks:
+  - [x] Added the private fallback-key credential contract.
+  - [x] Implemented primary-first failover with project cooldowns.
+  - [x] Preserved retries in one request-fingerprint cache record.
+  - [x] Mocked quota, transient, terminal, and credential failures.
+  - [x] Validated each credential through Gemini model metadata without
+        generating content or approaching quota.
+  - [x] Kept all long-video chunks sequential by default.
+- Related document:
+  [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
