@@ -5,6 +5,35 @@ feature, investigation, design, and refinement work.
 
 ## Active items
 
+### LEDGER-006 — Add Gemini transcript-only mode
+
+- Status: In progress
+- Type: Feature
+- Layer: Gemini request construction
+- Problem: Gemini normally describes and interprets a supplied video. In two
+  captionless-video trials, an explicit transcript-only prompt and constrained
+  JSON response made it transcribe instead.
+- Goal: Add an explicit transcript request mode to the existing Gemini
+  pipeline.
+- Required work:
+  - [ ] Add the tested transcript-only prompt and response schema to the
+        existing request builder.
+  - [ ] Expose transcript mode without changing existing prompt-driven
+        requests.
+  - [ ] Document the minimal invocation, including the tested output budget
+        and use of the existing chunk planner for long videos.
+  - [ ] Test the generated request contract and unchanged default behavior.
+  - [ ] Re-run all existing Gemini routing and cache tests.
+- Constraints:
+  - Reuse the existing caption-first workflow, cache v2, Gemini project
+    routing, credential handling, and chunk planner.
+  - Do not add translation, transliteration, diarization, subtitle export,
+    alternative ASR, cache redesign, routing changes, or unrelated
+    refactoring.
+- Completion rule: Every changed line must be necessary to build, invoke,
+  document, or test transcript-only requests.
+- Related evidence: July 2026 Raaz and Haal-e-Dil captionless-video trials.
+
 ### LEDGER-001 — Run controlled clean-account installation trials
 
 - Status: Planned
