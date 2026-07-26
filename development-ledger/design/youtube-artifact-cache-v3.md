@@ -257,10 +257,12 @@ no native artifacts exist. Do not read execution records to reconstruct an
 artifact manifest.
 
 Raw Drive-file replacement currently provides no atomic compare-and-set
-operation through the connected workflow. Do not claim cross-session
-at-most-once execution until the release adopts and documents either an
-explicit single-writer rule with pending-lease reconciliation or a storage
-operation that supplies the required atomicity.
+operation through the connected workflow. The initial release therefore adopts
+the explicit
+[single-writer-per-video policy](youtube-artifact-cache-v3-single-writer-policy.md).
+Treat it as a supported-use constraint, not technical mutual exclusion. Leases
+support crash recovery and reconciliation but do not make writer acquisition
+atomic or prove that an expired writer stopped.
 
 ## Optional disposable cache-v2 validator
 
@@ -304,6 +306,9 @@ during controlled validation.
   Store its lifecycle and router attempts in the separate native v3 execution
   journal. Block identical pending or completed executions, and require a
   documented permitted reason before retrying an identical failed execution.
+- Enforce the supported single-writer-per-normalized-video workflow described
+  in the dedicated policy. Keep writer ownership, leases, handoffs, and
+  abandonment in the execution journal rather than the artifact manifest.
 - Do not implement the optional v2 validator. Native offline fixtures cover the
   required storage, retrieval, truncation, integrity, and idempotency evidence
   without introducing a disposable dependency.
@@ -333,6 +338,9 @@ Cache v3 should instead test:
 - missing-manifest reconstruction before empty initialization;
 - durable router-attempt history and failed-retry authorization;
 - pending expiry and reconciliation;
+- same-video writer blocking, read-only concurrency, different-video
+  independence, writer handoff, and abandonment under the documented
+  single-writer policy;
 - execution-journal recovery independent of manifest recovery;
 - manifest entries restricted to artifact-discovery, compatibility, coverage,
   and integrity fields;
@@ -355,6 +363,9 @@ behavior and removable isolation from production v3 code.
 - No cache-v3 implementation inside transcript-mode history.
 - No cache-v2 compatibility, import, migration, or fallback path in production
   v3 code.
+- No claim of Drive-backed cross-session mutual exclusion, at-most-once
+  execution when the single-writer policy is violated, or exactly-once
+  execution.
 - No deletion of cache-v2 data as part of the v3 feature branch; retire it
   separately after validation.
 - No live Gemini quota consumption merely to test the index design.

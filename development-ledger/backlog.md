@@ -70,11 +70,15 @@ feature, investigation, design, and refinement work.
     in the artifact manifest. Completed provenance is also copied into
     artifacts, but manifest reconstruction still cannot recover pending or
     failed execution-only history.
+  - Drive replacement exposes no atomic compare-and-set operation, so leases
+    cannot enforce mutual exclusion across Work sessions.
 - Goal: Add a native v3 Gemini execution journal without restoring cache-v2
   schemas, filenames, lookup, migration, or fallback behavior. Keep every
   execution-oriented field in this separate data structure and link successful
   executions to produced artifact IDs only in the execution-to-artifact
-  direction.
+  direction. Support one write-capable session per normalized video ID and
+  describe that boundary as an operating policy rather than a Drive-enforced
+  concurrency guarantee.
 - Next check:
   - [ ] Store pending, completed, and failed executions separately from the
         artifact-discovery manifest.
@@ -86,15 +90,24 @@ feature, investigation, design, and refinement work.
         of artifact-manifest reconstruction.
   - [ ] Add pending expiry and reconciliation without claiming unsupported
         cross-session atomicity.
+  - [ ] Block another session's same-video write path while active pending
+        ownership exists; continue to permit read-only artifact reuse.
+  - [ ] Treat expiry as a reconciliation trigger, not automatic takeover, and
+        preserve explicit writer handoff or abandonment evidence.
+  - [ ] Permit different normalized video IDs to have independent concurrent
+        writers.
   - [ ] Keep the artifact manifest byte-stable across every execution-only
         state change that produces no searchable artifact.
   - [ ] Store produced artifact IDs on execution records without adding
         execution back-references to artifacts or manifests.
   - [ ] Re-run LEDGER-004 routing, failure, cooldown, and retry-history tests
         against the native v3 execution lifecycle.
+  - [ ] Summarize the dedicated single-writer policy in `SKILL.md` and
+        `references/contracts.md` without redefining it.
 - Related documents:
   - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
   - [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
+  - [`design/youtube-artifact-cache-v3-single-writer-policy.md`](design/youtube-artifact-cache-v3-single-writer-policy.md)
 
 ### LEDGER-009 — Correct per-video artifact manifests
 
