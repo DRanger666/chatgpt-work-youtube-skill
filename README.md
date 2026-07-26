@@ -47,6 +47,12 @@ fingerprinted and checked against persistent cache before it runs. Successes,
 failures, generated information, and usage totals are saved so the same work
 is not paid for or repeated without a reason.
 
+For interactive continuity, the skill can use a second credential belonging to
+a different Google Cloud project. It remains primary-first and sequential:
+the fallback is used only when the primary project is cooling down or
+unavailable. It does not blindly rotate keys or parallelize expensive video
+chunks.
+
 ## Upstream maintenance
 
 The skill does not blindly follow a moving branch. The pinned commit is the
@@ -100,6 +106,8 @@ Translate and explain what is happening in this captionless video.
 - `scripts/call_youtube_mcp.mjs` — make deterministic MCP calls.
 - `scripts/build_gemini_chunk_request.py` — build timestamp-clipped requests.
 - `scripts/gemini_cache.py` — enforce the Gemini cache-record lifecycle.
+- `scripts/gemini_request.py` — route requests through healthy project
+  credentials with bounded retries and cooldowns.
 - `references/contracts.md` — version, credential, API, and cache contracts.
 - `development-ledger/` — ongoing investigations, design notes, debugging
   records, and evidence-backed backlog items.

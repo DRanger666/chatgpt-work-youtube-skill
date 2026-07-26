@@ -8,6 +8,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+SCHEMA_VERSION = 2
+ATTEMPT_FIELDS = (
+    "bucket",
+    "startedAt",
+    "finishedAt",
+    "httpStatus",
+    "classification",
+    "errorStatus",
+    "cooldownUntil",
+    "retryDelaySeconds",
+    "backoffSeconds",
+)
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -27,6 +41,51 @@ def request_fingerprint(request_path: Path) -> str:
     return hashlib.sha256(request_path.read_bytes()).hexdigest()
 
 
+def migrate_record(record):
+    schema_version = record.get("schemaVersion", 1)
+    if schema_version > SCHEMA_VERSION:
+        raise SystemExit(f"Unsupported cache schema version: {schema_version}")
+    if schema_version == SCHEMA_VERSION:
+        record.setdefault("attempts", [])
+        return record
+
+    attempts = []
+    if record.get("attemptStartedAt"):
+        legacy_status = record.get("status")
+        classification = {
+            "succeeded": "success",
+            "failed": "request_failure",
+            "pending": "pending",
+        }.get(legacy_status, "unknown")
+        legacy_attempt = {
+            "bucket": "unrecorded",
+            "startedAt": record["attemptStartedAt"],
+            "classification": classification,
+        }
+        if record.get("attemptFinishedAt"):
+            legacy_attempt["finishedAt"] = record["attemptFinishedAt"]
+        if record.get("httpStatus") is not None:
+            legacy_attempt["httpStatus"] = record["httpStatus"]
+        attempts.append(legacy_attempt)
+
+    record["schemaVersion"] = SCHEMA_VERSION
+    record["attempts"] = attempts
+    return record
+
+
+def sanitized_attempts(routing_metadata):
+    attempts = []
+    for source in routing_metadata.get("attempts", []):
+        if not isinstance(source, dict):
+            raise SystemExit("Routing metadata attempts must be objects")
+        attempt = {field: source[field] for field in ATTEMPT_FIELDS if field in source}
+        bucket = attempt.get("bucket")
+        if bucket not in ("primary", "fallback", "unrecorded"):
+            raise SystemExit(f"Unsupported credential bucket alias: {bucket}")
+        attempts.append(attempt)
+    return attempts
+
+
 def start(args) -> int:
     request_path = Path(args.request).resolve()
     output_dir = Path(args.output_dir).resolve()
@@ -34,11 +93,33 @@ def start(args) -> int:
     fingerprint = request_fingerprint(request_path)
     output_path = output_dir / f"{args.video_id}--{fingerprint[:16]}.json"
     if output_path.exists():
-        print(json.dumps({"status": "exists", "record": str(output_path), "fingerprint": fingerprint}))
-        return 3
+        record = migrate_record(load_json(output_path))
+        if record.get("requestFingerprint") != fingerprint:
+            raise SystemExit("Existing cache filename does not match its request fingerprint")
+        existing_status = record.get("status")
+        if existing_status == "succeeded":
+            print(json.dumps({"status": "exists", "record": str(output_path), "fingerprint": fingerprint}))
+            return 3
+        if existing_status == "pending":
+            print(json.dumps({"status": "pending", "record": str(output_path), "fingerprint": fingerprint}))
+            return 4
+        if existing_status != "failed":
+            raise SystemExit(f"Unsupported existing cache status: {existing_status}")
+        if not args.retry_reason:
+            print(json.dumps({"status": "failed", "record": str(output_path), "fingerprint": fingerprint}))
+            return 5
+
+        record["status"] = "pending"
+        record["retrySameRequest"] = True
+        record["retryReason"] = args.retry_reason
+        record["attemptStartedAt"] = utc_now()
+        record.pop("attemptFinishedAt", None)
+        write_json(output_path, record)
+        print(json.dumps({"status": "reopened", "record": str(output_path), "fingerprint": fingerprint}))
+        return 0
 
     record = {
-        "schemaVersion": 1,
+        "schemaVersion": SCHEMA_VERSION,
         "videoId": args.video_id,
         "videoUrl": args.video_url,
         "requestFingerprint": fingerprint,
@@ -48,6 +129,7 @@ def start(args) -> int:
         "status": "pending",
         "attemptStartedAt": utc_now(),
         "retrySameRequest": False,
+        "attempts": [],
     }
     if args.clip_start is not None or args.clip_end is not None:
         record["clip"] = {
@@ -63,7 +145,7 @@ def start(args) -> int:
 
 def finish(args) -> int:
     record_path = Path(args.record).resolve()
-    record = load_json(record_path)
+    record = migrate_record(load_json(record_path))
     if record.get("status") != "pending":
         raise SystemExit("Refusing to finish a record that is not pending")
 
@@ -72,9 +154,27 @@ def finish(args) -> int:
     record["httpStatus"] = args.http_status
     record["retrySameRequest"] = False
 
+    if args.routing_metadata:
+        routing_metadata = load_json(Path(args.routing_metadata).resolve())
+        record["attempts"].extend(sanitized_attempts(routing_metadata))
+        if routing_metadata.get("selectedBucket") in ("primary", "fallback"):
+            record["selectedBucket"] = routing_metadata["selectedBucket"]
+    else:
+        classification = "success" if args.status == "succeeded" else "request_failure"
+        record["attempts"].append(
+            {
+                "bucket": args.bucket,
+                "startedAt": record.get("attemptStartedAt", record["attemptFinishedAt"]),
+                "finishedAt": record["attemptFinishedAt"],
+                "httpStatus": args.http_status,
+                "classification": classification,
+            }
+        )
+
     if args.response:
         response = load_json(Path(args.response).resolve())
         if args.status == "succeeded":
+            record.pop("error", None)
             candidate = response["candidates"][0]
             text = candidate["content"]["parts"][0]["text"]
             try:
@@ -86,6 +186,7 @@ def finish(args) -> int:
             record["usageMetadata"] = response.get("usageMetadata")
             record["result"] = result
         else:
+            record.pop("result", None)
             record["error"] = response.get("error", response)
     elif args.error_message:
         record["error"] = {"message": args.error_message}
@@ -140,6 +241,13 @@ def build_parser() -> argparse.ArgumentParser:
     finish_parser.add_argument("--response")
     finish_parser.add_argument("--error-message")
     finish_parser.add_argument("--conclusion")
+    finish_parser.add_argument("--routing-metadata")
+    finish_parser.add_argument(
+        "--bucket",
+        choices=("primary", "fallback", "unrecorded"),
+        default="unrecorded",
+        help="Credential alias for backward-compatible calls without routing metadata",
+    )
     finish_parser.set_defaults(function=finish)
 
     plan_parser = subparsers.add_parser("plan")

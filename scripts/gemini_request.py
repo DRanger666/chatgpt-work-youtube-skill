@@ -1,0 +1,450 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import random
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+
+
+STATE_SCHEMA_VERSION = 1
+ROUTING_SCHEMA_VERSION = 1
+TRANSIENT_HTTP_STATUSES = {408, 500, 502, 503, 504}
+KEY_INVALID_MARKERS = (
+    "api_key_invalid",
+    "api key not valid",
+    "api key is invalid",
+    "invalid api key",
+)
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def isoformat(value):
+    return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_iso8601(value):
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def write_json(path, value):
+    path = Path(path).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(temporary, path)
+
+
+def load_json(path):
+    with Path(path).resolve().open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def default_bucket_state():
+    return {"cooldownUntil": None, "disabled": False, "reason": None}
+
+
+def load_state(path):
+    path = Path(path).resolve()
+    if not path.exists():
+        return {
+            "schemaVersion": STATE_SCHEMA_VERSION,
+            "buckets": {
+                "primary": default_bucket_state(),
+                "fallback": default_bucket_state(),
+            },
+        }
+    state = load_json(path)
+    if state.get("schemaVersion") != STATE_SCHEMA_VERSION:
+        raise SystemExit(f"Unsupported Gemini pool state schema: {state.get('schemaVersion')}")
+    buckets = state.setdefault("buckets", {})
+    for alias in ("primary", "fallback"):
+        buckets.setdefault(alias, default_bucket_state())
+    return state
+
+
+def load_buckets():
+    candidates = [
+        ("primary", os.environ.get("GEMINI_API_KEY")),
+        ("fallback", os.environ.get("GEMINI_API_KEY_FALLBACK")),
+    ]
+    buckets = []
+    seen_values = set()
+    for alias, value in candidates:
+        if not value or value in seen_values:
+            continue
+        seen_values.add(value)
+        buckets.append({"alias": alias, "key": value})
+    if not buckets:
+        raise SystemExit("No Gemini credential is configured")
+    return buckets
+
+
+def error_parts(payload):
+    error = payload.get("error", payload) if isinstance(payload, dict) else {}
+    if not isinstance(error, dict):
+        error = {}
+    status = str(error.get("status", "")).upper()
+    message = str(error.get("message", ""))
+    return status, message, error.get("details", [])
+
+
+def retry_delay_from_payload(payload):
+    _, message, details = error_parts(payload)
+    if isinstance(details, list):
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            if str(detail.get("@type", "")).endswith("google.rpc.RetryInfo"):
+                value = detail.get("retryDelay")
+                if isinstance(value, str):
+                    match = re.fullmatch(r"\s*([0-9]+(?:\.[0-9]+)?)s\s*", value)
+                    if match:
+                        return float(match.group(1))
+    match = re.search(
+        r"(?:retry\s+(?:in|after)|reset\s+after)\s+([0-9]+(?:\.[0-9]+)?)\s*s",
+        message,
+        flags=re.IGNORECASE,
+    )
+    return float(match.group(1)) if match else None
+
+
+def retry_delay_from_headers(headers, now):
+    if not headers:
+        return None
+    retry_after = headers.get("Retry-After") or headers.get("retry-after")
+    if not retry_after:
+        return None
+    try:
+        return max(0.0, float(retry_after))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(retry_after)
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (parsed - now).total_seconds())
+
+
+def classify_response(http_status, payload):
+    error_status, message, _ = error_parts(payload)
+    lowered_message = message.lower()
+    if 200 <= http_status < 300:
+        return "success", error_status
+    if http_status == 429 or error_status == "RESOURCE_EXHAUSTED":
+        return "rate_limited", error_status
+    if http_status in (401, 403):
+        return "credential_failure", error_status
+    if http_status == 400 and any(marker in lowered_message for marker in KEY_INVALID_MARKERS):
+        return "credential_failure", error_status
+    if http_status in TRANSIENT_HTTP_STATUSES or http_status == 0:
+        return "transient", error_status
+    return "request_failure", error_status
+
+
+def send_request(endpoint, api_key, request_bytes, timeout_seconds):
+    request = urllib.request.Request(
+        endpoint,
+        data=request_bytes,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read()
+            return response.status, dict(response.headers.items()), body
+    except urllib.error.HTTPError as error:
+        return error.code, dict(error.headers.items()), error.read()
+    except (urllib.error.URLError, TimeoutError) as error:
+        payload = {
+            "error": {
+                "code": 0,
+                "status": "NETWORK_ERROR",
+                "message": type(error).__name__,
+            }
+        }
+        return 0, {}, json.dumps(payload).encode("utf-8")
+
+
+def decode_payload(response_bytes):
+    try:
+        value = json.loads(response_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {
+            "error": {
+                "code": 0,
+                "status": "INVALID_RESPONSE",
+                "message": "Gemini returned a non-JSON response",
+            }
+        }
+    return value
+
+
+def bucket_available(alias, state, now):
+    bucket_state = state["buckets"][alias]
+    if bucket_state.get("disabled"):
+        return False
+    cooldown_until = parse_iso8601(bucket_state.get("cooldownUntil"))
+    return cooldown_until is None or cooldown_until <= now
+
+
+def mark_cooldown(state, alias, delay_seconds, reason, now):
+    cooldown_until = now + timedelta(seconds=delay_seconds)
+    state["buckets"][alias] = {
+        "cooldownUntil": isoformat(cooldown_until),
+        "disabled": False,
+        "reason": reason,
+    }
+    return cooldown_until
+
+
+def mark_disabled(state, alias, reason):
+    state["buckets"][alias] = {
+        "cooldownUntil": None,
+        "disabled": True,
+        "reason": reason,
+    }
+
+
+def attempt_record(alias, started_at, finished_at, http_status, classification, error_status):
+    attempt = {
+        "bucket": alias,
+        "startedAt": isoformat(started_at),
+        "finishedAt": isoformat(finished_at),
+        "httpStatus": http_status,
+        "classification": classification,
+    }
+    if error_status:
+        attempt["errorStatus"] = error_status
+    return attempt
+
+
+def safe_failure_payload(http_status, payload, earliest_cooldown=None):
+    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+        return payload
+    result = {
+        "error": {
+            "code": http_status,
+            "status": "REQUEST_FAILED",
+            "message": "Gemini request failed",
+        }
+    }
+    if earliest_cooldown:
+        result["error"]["earliestCooldownUntil"] = isoformat(earliest_cooldown)
+    return result
+
+
+def earliest_cooldown(state):
+    values = []
+    for bucket_state in state["buckets"].values():
+        value = parse_iso8601(bucket_state.get("cooldownUntil"))
+        if value:
+            values.append(value)
+    return min(values) if values else None
+
+
+def run(args):
+    request_bytes = Path(args.request).resolve().read_bytes()
+    buckets = load_buckets()
+    state_path = Path(args.state).resolve()
+    state = load_state(state_path)
+    routing = {
+        "schemaVersion": ROUTING_SCHEMA_VERSION,
+        "status": "pending",
+        "selectedBucket": None,
+        "attempts": [],
+    }
+    tried_buckets = set()
+    last_payload = None
+    last_http_status = 0
+
+    while True:
+        now = utc_now()
+        available = [
+            bucket
+            for bucket in buckets
+            if bucket["alias"] not in tried_buckets
+            and bucket_available(bucket["alias"], state, now)
+        ]
+        if not available:
+            routing["status"] = "failed"
+            routing["earliestCooldownUntil"] = (
+                isoformat(earliest_cooldown(state)) if earliest_cooldown(state) else None
+            )
+            if last_payload is None:
+                last_http_status = 429
+                last_payload = {
+                    "error": {
+                        "code": 429,
+                        "status": "RESOURCE_EXHAUSTED",
+                        "message": "No healthy Gemini project bucket is available",
+                    }
+                }
+            write_json(args.response, safe_failure_payload(last_http_status, last_payload))
+            write_json(args.routing_metadata, routing)
+            write_json(state_path, state)
+            print(json.dumps({"status": "failed", "attempts": len(routing["attempts"])}))
+            return 3
+
+        bucket = available[0]
+        alias = bucket["alias"]
+        transient_retries = 0
+
+        while True:
+            started_at = utc_now()
+            http_status, headers, response_bytes = send_request(
+                args.endpoint,
+                bucket["key"],
+                request_bytes,
+                args.timeout_seconds,
+            )
+            finished_at = utc_now()
+            payload = decode_payload(response_bytes)
+            classification, error_status = classify_response(http_status, payload)
+            attempt = attempt_record(
+                alias,
+                started_at,
+                finished_at,
+                http_status,
+                classification,
+                error_status,
+            )
+            routing["attempts"].append(attempt)
+            last_payload = payload
+            last_http_status = http_status
+
+            if classification == "success":
+                state["buckets"][alias] = default_bucket_state()
+                routing["status"] = "succeeded"
+                routing["selectedBucket"] = alias
+                write_json(args.response, payload)
+                write_json(args.routing_metadata, routing)
+                write_json(state_path, state)
+                print(
+                    json.dumps(
+                        {
+                            "status": "succeeded",
+                            "bucket": alias,
+                            "attempts": len(routing["attempts"]),
+                        }
+                    )
+                )
+                return 0
+
+            if classification == "rate_limited":
+                now = utc_now()
+                delay = retry_delay_from_headers(headers, now)
+                if delay is None:
+                    delay = retry_delay_from_payload(payload)
+                if delay is None:
+                    delay = args.default_cooldown_seconds
+                delay = max(1.0, delay) + random.uniform(0.0, args.jitter_seconds)
+                cooldown_until = mark_cooldown(state, alias, delay, "rate_limited", now)
+                attempt["retryDelaySeconds"] = round(delay, 3)
+                attempt["cooldownUntil"] = isoformat(cooldown_until)
+                tried_buckets.add(alias)
+                break
+
+            if classification == "credential_failure":
+                mark_disabled(state, alias, "credential_failure")
+                tried_buckets.add(alias)
+                break
+
+            if classification == "transient":
+                if transient_retries < args.max_transient_retries:
+                    delay = min(
+                        args.max_backoff_seconds,
+                        args.base_backoff_seconds * (2**transient_retries),
+                    )
+                    delay += random.uniform(0.0, args.jitter_seconds)
+                    attempt["backoffSeconds"] = round(delay, 3)
+                    transient_retries += 1
+                    if not args.no_sleep:
+                        time.sleep(delay)
+                    continue
+                now = utc_now()
+                delay = args.default_transient_cooldown_seconds
+                cooldown_until = mark_cooldown(state, alias, delay, "transient_failures", now)
+                attempt["cooldownUntil"] = isoformat(cooldown_until)
+                tried_buckets.add(alias)
+                break
+
+            routing["status"] = "failed"
+            write_json(args.response, safe_failure_payload(http_status, payload))
+            write_json(args.routing_metadata, routing)
+            write_json(state_path, state)
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "httpStatus": http_status,
+                        "classification": classification,
+                        "attempts": len(routing["attempts"]),
+                    }
+                )
+            )
+            return 2
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Send one Gemini request through a conservative two-project credential pool"
+    )
+    parser.add_argument("--request", required=True)
+    parser.add_argument("--response", required=True)
+    parser.add_argument("--routing-metadata", required=True)
+    parser.add_argument("--state", required=True)
+    parser.add_argument(
+        "--endpoint",
+        default=(
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-3.6-flash:generateContent"
+        ),
+    )
+    parser.add_argument("--timeout-seconds", type=float, default=600.0)
+    parser.add_argument("--max-transient-retries", type=int, default=2)
+    parser.add_argument("--base-backoff-seconds", type=float, default=1.0)
+    parser.add_argument("--max-backoff-seconds", type=float, default=30.0)
+    parser.add_argument("--default-cooldown-seconds", type=float, default=60.0)
+    parser.add_argument("--default-transient-cooldown-seconds", type=float, default=30.0)
+    parser.add_argument("--jitter-seconds", type=float, default=1.0)
+    parser.add_argument("--no-sleep", action="store_true", help=argparse.SUPPRESS)
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
+    if args.max_transient_retries < 0:
+        raise SystemExit("max-transient-retries must be non-negative")
+    for name in (
+        "base_backoff_seconds",
+        "max_backoff_seconds",
+        "default_cooldown_seconds",
+        "default_transient_cooldown_seconds",
+        "jitter_seconds",
+    ):
+        if getattr(args, name) < 0:
+            raise SystemExit(f"{name.replace('_', '-')} must be non-negative")
+    return run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

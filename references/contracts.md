@@ -44,13 +44,24 @@ Prefer stable IDs. Fall back to exact-name search when an ID no longer resolves,
 
 Retrieve credentials in code mode so the connector result is not surfaced. Compare bytes or hashes without printing content. Materialize locally with mode `0600`.
 
+Credential variables:
+
+- `GEMINI_API_KEY`: primary Gemini project credential.
+- `GEMINI_API_KEY_FALLBACK`: optional credential from a different Google Cloud
+  project.
+
+Gemini quota is project-level. Multiple keys from the same project must not be
+treated as separate quota buckets.
+
 ## Gemini clipped request
 
 Use the Generate Content endpoint:
 
 `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent`
 
-Authenticate with the `x-goog-api-key` header from `GEMINI_API_KEY`.
+Send requests through `scripts/gemini_request.py`. It authenticates with the
+selected credential using the `x-goog-api-key` header without writing the
+credential to routing state or cache.
 
 Use this input structure:
 
@@ -83,9 +94,32 @@ Use this input structure:
 
 Google documents `startOffset` and `endOffset` as seconds ending in `s`. Keep the prompt after the video part.
 
+## Interactive Gemini quota pool
+
+The pool contains at most two aliases:
+
+- `primary` from `GEMINI_API_KEY`;
+- `fallback` from `GEMINI_API_KEY_FALLBACK`.
+
+Keep at most one request in flight. Prefer `primary`; use `fallback` only when
+the primary bucket is cooling down or unavailable. On `429
+RESOURCE_EXHAUSTED`, respect a server-provided retry delay when present, add
+jitter, and cool down the entire project bucket. Bound transient retries. Do
+not rotate on `400 INVALID_ARGUMENT`.
+
+Store session-local health at:
+
+`$install/workspace/gemini-keypool-state.json`
+
+The state may contain bucket aliases, cooldown times, disabled flags, and
+failure classifications. It must not contain credential values or
+fingerprints.
+
 ## Cache record lifecycle
 
-Create `pending` before the API call. Replace it in place with `succeeded` or `failed` afterward.
+Create `pending` before the API call. Replace it in place with `succeeded` or
+`failed` afterward. Use schema version 2 and retain all network attempts in one
+record.
 
 Required fields:
 
@@ -99,14 +133,31 @@ Required fields:
 - `status`
 - `attemptStartedAt`
 - `retrySameRequest`
+- `attempts`
 
-Add clip bounds, finish time, HTTP status, model version, usage metadata, parsed result, error, and conclusion when applicable.
+Each `attempts` entry may contain:
+
+- `bucket`
+- `startedAt`
+- `finishedAt`
+- `httpStatus`
+- `classification`
+- `errorStatus`
+- `retryDelaySeconds`
+- `cooldownUntil`
+- `backoffSeconds`
+
+Add clip bounds, finish time, final HTTP status, selected bucket alias, model
+version, usage metadata, parsed result, error, and conclusion when applicable.
+Reopen an identical failed record only with a documented permitted retry
+reason. Preserve prior attempts.
 
 Never store:
 
 - API keys
 - authorization headers
 - raw credential files
+- credential fragments or fingerprints
 - unrelated personal information
 
 ## Validated behavior
@@ -115,6 +166,9 @@ Never store:
 - A public captionless 2h15m Hindi movie failed as a single whole-video Gemini request.
 - The same movie succeeded when clipped to `0s`–`1800s`.
 - Treat each clip and prompt as a separate fingerprinted cache item.
+- Offline routing tests cover primary success, project cooldown, fallback,
+  bounded transient retry, terminal request errors, credential failure, and
+  legacy cache migration.
 
 ## Primary documentation
 

@@ -17,6 +17,8 @@ Use a transcript-first, cache-first workflow. Rebuild missing local tooling auto
 - Record every Gemini attempt, including failures.
 - Never repeat an identical failed request without a documented reason.
 - Keep generated research separate from credentials.
+- Keep Gemini video requests sequential; do not parallelize chunks across
+  credentials.
 
 Read [references/contracts.md](references/contracts.md) before using Google Drive or Gemini.
 
@@ -65,9 +67,12 @@ Perform these steps for every Gemini call, including chunk synthesis:
 5. If an identical failed record exists, stop unless a permitted rerun condition below applies.
 6. Create a local `pending` record with `gemini_cache.py start`.
 7. Upload that pending record to `YouTubeResearchCache` before the network request.
-8. Execute the Gemini request.
-9. Finish the same local record with `gemini_cache.py finish`, whether the call succeeded or failed.
-10. Replace the same Drive file in place. Verify its status and fingerprint.
+8. Execute the request through `scripts/gemini_request.py`, which selects a
+   healthy project bucket and writes safe routing metadata.
+9. Finish the same local record with `gemini_cache.py finish
+   --routing-metadata ROUTING_JSON`, whether the call succeeded or failed.
+10. Replace the same Drive file in place. Verify its status, fingerprint, and
+    appended attempt history.
 
 Permit a new call only when at least one condition is explicit:
 
@@ -78,6 +83,39 @@ Permit a new call only when at least one condition is explicit:
 - Independent verification is justified and identified as such.
 
 Do not classify an `INVALID_ARGUMENT` response as transient. Do not retry it unchanged.
+
+When a prior failed record qualifies for a new attempt, reopen it with
+`gemini_cache.py start --retry-reason REASON`. Preserve its existing
+`attempts` history.
+
+## Route Gemini requests conservatively
+
+Use the primary credential normally and the fallback only when the primary
+project is cooling down, rate-limited, transiently unavailable after bounded
+retries, or credential-invalid.
+
+Run:
+
+```sh
+python3 "$skill_dir/scripts/gemini_request.py" \
+  --request REQUEST_JSON \
+  --response RESPONSE_JSON \
+  --routing-metadata ROUTING_JSON \
+  --state "$install/workspace/gemini-keypool-state.json"
+```
+
+The router permits only one request at a time. It handles:
+
+- quota exhaustion by cooling the project bucket and trying the other healthy
+  bucket once;
+- `408` and transient `5xx` responses with bounded exponential backoff and
+  jitter;
+- credential failures by disabling that bucket for the run;
+- terminal request errors without rotating keys.
+
+If every configured bucket is unavailable, stop and report the cooldown rather
+than looping. Record only the aliases `primary` and `fallback`; never record a
+key or key fingerprint.
 
 ## Chunk long or rejected videos
 
@@ -105,6 +143,7 @@ python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
 Require timestamps relative to the complete YouTube video. Cache every chunk separately. Synthesize from cached chunk outputs; if Gemini performs the synthesis, cache that request and result as another transaction.
 
 Start with one representative chunk. Expand to all chunks only after that chunk succeeds.
+Process chunks sequentially.
 
 ## Recover Gemini credentials privately
 
@@ -115,6 +154,15 @@ Fetch the raw credential file without displaying its bytes. Materialize it as:
 `$install/config/youtube-workbench-secrets.env`
 
 Set mode `0600`, then load it into the process environment. Never place it in `materials/`, `workspace/`, a prompt, a tool argument, source control, or a cache record.
+
+The credential file may contain:
+
+- `GEMINI_API_KEY` for the primary Google Cloud project.
+- `GEMINI_API_KEY_FALLBACK` for a separately provisioned fallback project.
+
+Gemini quotas are project-level. Do not expect two keys from the same project
+to add capacity. The router collapses duplicate credential values to one
+bucket.
 
 If Drive requires connection or authorization, stop and ask the user to connect it. Do not create a Gemini request before credential retrieval succeeds.
 
