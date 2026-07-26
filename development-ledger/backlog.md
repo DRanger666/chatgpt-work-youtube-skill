@@ -13,14 +13,17 @@ feature, investigation, design, and refinement work.
 - Problem: Drive cache records are named by execution-request fingerprints, so
   the agent cannot deterministically enumerate the reusable transcript and
   analysis material associated with one video.
-- Goal: Add one predictable per-video manifest that indexes immutable
-  artifacts, compatibility metadata, valid coverage, integrity hashes, and
-  execution provenance.
+- Goal: Add one predictable per-video manifest in a clean v3 Drive namespace
+  that indexes immutable artifacts, compatibility metadata, valid coverage,
+  integrity hashes, and execution provenance without inheriting cache-v2
+  schemas or lookup behavior.
 - Next check:
-  - [ ] Finalize the manifest schema and update semantics.
+  - [ ] Finalize native manifest schema version `1` and update semantics.
+  - [ ] Fix the separate no-space v3 Drive namespace and deterministic lookup.
   - [ ] Define recovery from missing or stale manifest entries.
-  - [ ] Design read-through indexing of existing cache-v2 records.
-  - [ ] Test deterministic lookup without consuming Gemini quota.
+  - [ ] Prove clean-slate operation without cache-v2 data or fixtures.
+  - [ ] If useful, isolate v2 comparison in a disposable read-only validator
+        that production v3 code cannot import.
 - Related document:
   [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md)
 
@@ -38,6 +41,7 @@ feature, investigation, design, and refinement work.
   - [ ] Define transcript compatibility and interval-union rules.
   - [ ] Define handling for overlaps, truncation, and partial coverage.
   - [ ] Keep execution fingerprints as last-moment idempotency guards.
+  - [ ] Keep v3 retrieval free of cache-v2 fallback and compatibility paths.
   - [ ] Test exact, containing, composite, incompatible, and incomplete
         coverage cases.
 - Related document:

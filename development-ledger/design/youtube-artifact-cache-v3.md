@@ -2,8 +2,8 @@
 
 ## Status
 
-Design candidate. Implement only on a dedicated feature branch after the
-artifact-search and manifest contracts below are reviewed together.
+Approved clean-slate direction. Implement only on a dedicated feature branch,
+with the artifact-search and manifest contracts reviewed together.
 
 ## Problem
 
@@ -26,6 +26,24 @@ The cache-v3 principle is:
 
 > Search by what an artifact represents and covers; audit by how it was
 > produced.
+
+## Clean-slate boundary
+
+Design cache v3 independently of cache v2:
+
+- Use a separate no-space Drive namespace for native v3 manifests and
+  artifacts.
+- Start the new manifest and artifact contracts at their own schema version
+  `1`; “v3” names the system generation, not an inherited record schema.
+- Do not add v2 fields, filename rules, lookup fallbacks, migration markers, or
+  compatibility branches to normal v3 code.
+- Do not search v2 when a v3 manifest is absent.
+- Do not require v2 data or fixtures for native v3 tests.
+- Regenerate the small amount of useful prior material natively in v3 when
+  that is simpler or safer than preserving compatibility.
+
+Cache-v2 records may remain temporarily as read-only validation evidence, but
+they impose no requirements on v3 identity, storage, retrieval, or lifecycle.
 
 ## Design A — Artifact-first retrieval and coverage planning
 
@@ -101,17 +119,26 @@ normalization.
 - Manifest coverage resolves every acceptance case in Design A.
 - Missing or stale manifest entries do not destroy underlying artifacts.
 - Updating a manifest does not rewrite immutable artifact content.
-- Existing cache-v2 results become discoverable without another Gemini call.
+- A clean v3 namespace works correctly when no cache-v2 data exists.
+- Manifests and artifacts contain no legacy-only compatibility fields.
 
-## Cache-v2 migration
+## Optional disposable cache-v2 validator
 
-- Preserve existing v2 records.
-- Extract their source, route, clip, completion, and result metadata into
-  manifests without rerunning Gemini.
-- Support read-through discovery of v2 records during transition.
-- Retain existing request fingerprints as execution provenance rather than
-  artifact identities.
-- Avoid destructive or eager rewriting of prior records.
+If comparison with prior results is useful, keep it outside the v3 runtime:
+
+- Read v2 records without modifying them.
+- Compare their source, interval, completion, and result information with
+  native v3 artifacts.
+- Produce validation reports only; do not create v3 manifests or artifacts
+  from v2 records.
+- Keep the dependency one-way: a disposable validator may inspect v3, but
+  production v3 code must never import or call the validator.
+- Remove the validator together with the remaining v2 data after
+  representative transcript, analysis, persistence, coverage, truncation, and
+  idempotency behavior is verified in v3.
+
+The validator is optional. Do not create it unless it provides concrete value
+during controlled validation.
 
 ## Test direction
 
@@ -121,16 +148,23 @@ artifact discovery.
 
 Cache v3 should instead test:
 
+- clean-slate operation with no v2 records or fixtures;
 - deterministic execution fingerprints;
 - artifact identity and compatibility;
 - interval coverage, composition, and gap detection;
 - manifest lookup and update behavior; and
-- cache-v2 discovery and migration.
+- isolation from legacy lookup and schema assumptions.
+
+If the disposable validator is implemented, test it separately for read-only
+behavior and removable isolation from production v3 code.
 
 ## Non-goals
 
 - No vector database or embedding service.
 - No automatic equivalence between semantically similar analysis prompts.
 - No cache-v3 implementation inside transcript-mode history.
-- No destruction of cache-v2 records.
+- No cache-v2 compatibility, import, migration, or fallback path in production
+  v3 code.
+- No deletion of cache-v2 data as part of the v3 feature branch; retire it
+  separately after validation.
 - No live Gemini quota consumption merely to test the index design.
