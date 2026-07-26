@@ -1,6 +1,6 @@
 ---
 name: work-with-youtube
-description: Reproducible YouTube video research and analysis using a portable local YouTube MCP server, timestamp-cited transcripts, Gemini video understanding for captionless or visual material, timestamp chunking for long videos, persistent Google Drive credential recovery, and mandatory cache-first result reuse. Use for any request to inspect, summarize, query, compare, cite, or otherwise work with one or more YouTube URLs or videos, including requests made in a fresh Work Mode VM.
+description: Reproducible YouTube video research and analysis using a portable local YouTube MCP server, timestamp-cited transcripts, artifact-first cache retrieval, Gemini video understanding for captionless or visual material, timestamp chunking for long videos, and persistent Google Drive storage and credential recovery. Use for any request to inspect, summarize, query, compare, cite, or otherwise work with one or more YouTube URLs or videos, including requests made in a fresh Work Mode VM.
 ---
 
 # Work with YouTube
@@ -13,9 +13,11 @@ Use a transcript-first, cache-first workflow. Rebuild missing local tooling auto
 - Keep `materials/` and `workspace/` inside that installation.
 - Never print, quote, summarize, log, or commit an API key.
 - Never store a credential in a research cache record.
-- Check persistent cache before every Gemini request.
+- Search native v3 artifacts before constructing a Gemini request.
+- Use `YouTubeArtifactCacheV3`; never fall back to cache v2.
+- Keep artifact files immutable and update only the per-video manifest.
 - Record every Gemini attempt, including failures.
-- Never repeat an identical failed request without a documented reason.
+- Never submit an identical pending or completed execution.
 - Keep generated research separate from credentials.
 - Keep Gemini video requests sequential; do not parallelize chunks across
   credentials.
@@ -48,11 +50,17 @@ For `research-video` and `research-videos`, add `--structured-only` to avoid emi
 ## Select the least expensive route
 
 1. Normalize each URL to a YouTube video ID.
-2. Use the MCP to inspect metadata and request the transcript.
-3. Use `research-video` for focused transcript questions and timestamp-linked citations.
-4. Use transcript results directly when they answer the request.
-5. Use Gemini only when captions are absent, visual evidence matters, or the user requests whole-video understanding beyond the transcript.
-6. For multiple videos, process and cache each video independently before comparison.
+2. Search the native v3 manifest and verified artifacts for compatible coverage.
+3. Reuse sufficient artifacts before invoking either transcript or video-model
+   generation.
+4. Use the MCP to inspect metadata and request captions for uncovered transcript
+   material.
+5. Use `research-video` for focused caption questions and timestamp-linked
+   citations.
+6. Use Gemini only when captions are absent, visual evidence matters, or the
+   user requests whole-video understanding beyond the available artifacts.
+7. For multiple videos, process and store each video independently before
+   comparison.
 
 Do not assume a YouTube Data API key can retrieve unavailable captions. Its caption-download operation normally requires permission to edit the video.
 
@@ -73,44 +81,55 @@ python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
 This mode requests only audible linguistic content in the original language,
 uses fixed full-video timestamp strings, and defaults to the tested
 8192-token output allowance. For a long video, use the existing chunk planner
-with 600-second chunks and a four-second overlap. Cache and route every chunk
-through the normal Gemini workflow.
+with 600-second chunks and a four-second overlap. Store and route every chunk
+through the native v3 workflow.
 
-Cache an incomplete or truncated response, but do not treat it as complete
-coverage. Process the unfinished interval with smaller clips, which create new
-request fingerprints. Never recover by repeating the identical request.
+Store an incomplete or truncated response as an immutable artifact, but index
+only its confirmed valid coverage. Search again and process the unfinished
+interval with smaller clips and new execution fingerprints. Never recover by
+repeating an identical pending or completed execution.
 
-## Run a mandatory Gemini cache transaction
+## Search and update artifact cache v3
 
-Perform these steps for every Gemini call, including chunk synthesis:
+Read the native schemas and file lifecycle in
+[references/contracts.md](references/contracts.md). Use
+`scripts/artifact_cache_v3.py` for every v3 operation.
 
-1. Build the exact request file.
-2. Compute its SHA-256 fingerprint using `scripts/gemini_cache.py start`.
-3. Search `YouTubeResearchCache` on Google Drive for the exact filename `<videoId>--<first16OfFingerprint>.json`.
-4. If a successful record exists, reuse it. Do not call Gemini.
-5. If an identical failed record exists, stop unless a permitted rerun condition below applies.
-6. Create a local `pending` record with `gemini_cache.py start`.
-7. Upload that pending record to `YouTubeResearchCache` before the network request.
-8. Execute the request through `scripts/gemini_request.py`, which selects a
-   healthy project bucket and writes safe routing metadata.
-9. Finish the same local record with `gemini_cache.py finish
-   --routing-metadata ROUTING_JSON`, whether the call succeeded or failed.
-10. Replace the same Drive file in place. Verify its status, fingerprint, and
-    appended attempt history.
+Before constructing a Gemini request:
 
-Permit a new call only when at least one condition is explicit:
+1. Run `locate --video VIDEO` and find the exact
+   `<videoId>--manifest.json` file in `YouTubeArtifactCacheV3`.
+2. If the manifest is absent, initialize an empty native manifest locally. Do
+   not search cache v2.
+3. Materialize the manifest's same-kind candidate artifacts by their Drive file
+   IDs.
+4. Write a query describing artifact kind, contract, full-video interval,
+   timestamp basis, and language policy; then run `search`.
+5. Verify selected artifact integrity. For analysis artifacts, inspect the task
+   descriptions and explicitly approve only artifacts that answer the current
+   question.
+6. Reuse complete coverage. Pass only `newRequestIntervals` to `plan-chunks`;
+   construct no request for already covered intervals.
 
-- The new question cannot be answered from cached results.
-- The prompt, clip, source, model, or processing route materially changed.
-- The cached failure was transient, such as rate limiting or a network failure.
-- The user requested a refresh.
-- Independent verification is justified and identified as such.
+Immediately before each unavoidable network execution:
 
-Do not classify an `INVALID_ARGUMENT` response as transient. Do not retry it unchanged.
+1. Build the request and a canonical execution-spec JSON file.
+2. Run `start-execution` against the current manifest. Stop when it reports an
+   identical pending or completed execution.
+3. Replace the Drive manifest with the pending version before sending the
+   request.
+4. Run `scripts/gemini_request.py` sequentially.
+5. On failure, run `finish-execution --status failed` and replace the manifest.
+   Do not loop automatically.
+6. On success, derive `execution-provenance`, create the native artifact, and
+   upload that new artifact file without replacing any prior artifact.
+7. Finish the execution as completed with the artifact ID, add the artifact
+   using its returned Drive file ID, and replace the mutable manifest.
 
-When a prior failed record qualifies for a new attempt, reopen it with
-`gemini_cache.py start --retry-reason REASON`. Preserve its existing
-`attempts` history.
+If an artifact upload succeeds but the manifest update fails, retain the
+artifact and rebuild the manifest from native artifact files and verified Drive
+file IDs. Never rewrite immutable artifact content. Execution fingerprints are
+provenance and duplicate-call guards only; do not use them for artifact search.
 
 ## Route Gemini requests conservatively
 
@@ -145,12 +164,13 @@ key or key fingerprint.
 
 Use timestamp clipping when a whole-video request exceeds limits or returns an ingestion error. Gemini accepts `videoMetadata.startOffset` and `endOffset` on YouTube inputs.
 
-Plan 30-minute chunks:
+Plan chunks from the search plan's uncovered intervals:
 
 ```sh
-python3 "$skill_dir/scripts/gemini_cache.py" plan \
-  --duration-seconds VIDEO_DURATION \
-  --chunk-seconds 1800
+python3 "$skill_dir/scripts/artifact_cache_v3.py" plan-chunks \
+  --search-plan SEARCH_PLAN_JSON \
+  --chunk-seconds 1800 \
+  --output CHUNK_PLAN_JSON
 ```
 
 Use a small overlap only when boundary continuity is material; the default is no overlap to avoid duplicate usage. Build each request with:
@@ -164,7 +184,9 @@ python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
   --output REQUEST_JSON
 ```
 
-Require timestamps relative to the complete YouTube video. Cache every chunk separately. Synthesize from cached chunk outputs; if Gemini performs the synthesis, cache that request and result as another transaction.
+Require timestamps relative to the complete YouTube video. Store every chunk
+as an independent artifact. Synthesize from reusable artifacts; if Gemini
+performs the synthesis, store that result and execution as another artifact.
 
 Start with one representative chunk. Expand to all chunks only after that chunk succeeds.
 Process chunks sequentially.

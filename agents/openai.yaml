@@ -1,7 +1,7 @@
 interface:
   display_name: Work with YouTube
   short_description: Analyze YouTube videos reproducibly
-  default_prompt: Use $work-with-youtube to analyze this YouTube video with cache-first
+  default_prompt: Use $work-with-youtube to analyze this YouTube video with artifact-first
     research.
 policy:
   products:

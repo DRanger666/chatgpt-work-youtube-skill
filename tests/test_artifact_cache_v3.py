@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -675,6 +677,170 @@ class ArtifactCacheV3ExecutionGuardTests(unittest.TestCase):
         serialized = json.dumps(result)
         self.assertNotIn("request", serialized)
         self.assertNotIn("credential", serialized)
+
+
+class ArtifactCacheV3ChunkPlanningTests(unittest.TestCase):
+    def test_chunks_only_uncovered_intervals(self):
+        chunks = artifact_cache.plan_chunks(
+            [interval(180_000, 1_380_000)],
+            chunk_seconds=600,
+            overlap_seconds=4,
+        )
+
+        self.assertEqual(
+            chunks,
+            [
+                interval(180_000, 780_000),
+                interval(776_000, 1_376_000),
+                interval(1_372_000, 1_380_000),
+            ],
+        )
+
+    def test_rejects_overlap_equal_to_chunk_size(self):
+        with self.assertRaisesRegex(
+            artifact_cache.CacheV3Error,
+            "overlap < chunk size",
+        ):
+            artifact_cache.plan_chunks(
+                [interval(0, 600_000)],
+                chunk_seconds=600,
+                overlap_seconds=600,
+            )
+
+
+class ArtifactCacheV3CliTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.artifacts = self.root / "artifacts"
+        self.artifacts.mkdir()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def run_cli(self, *arguments):
+        return subprocess.run(
+            [sys.executable, str(MODULE_PATH), *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_empty_manifest_search_and_chunk_plan(self):
+        manifest = self.root / "manifest.json"
+        query_path = self.root / "query.json"
+        search_plan = self.root / "search-plan.json"
+        chunk_plan = self.root / "chunk-plan.json"
+        query_path.write_text(
+            json.dumps(
+                {
+                    "video": VIDEO_ID,
+                    "kind": "transcript",
+                    "contract": {"name": "gemini-transcript", "version": 1},
+                    "timestampBasis": "full_video",
+                    "languagePolicy": {"mode": "source"},
+                    "requestedCoverage": [interval(0, 600_000)],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        initialized = self.run_cli(
+            "init-manifest",
+            "--video",
+            VIDEO_ID,
+            "--output",
+            str(manifest),
+            "--updated-at",
+            NOW,
+        )
+        searched = self.run_cli(
+            "search",
+            "--manifest",
+            str(manifest),
+            "--artifacts-dir",
+            str(self.artifacts),
+            "--query",
+            str(query_path),
+            "--output",
+            str(search_plan),
+        )
+        chunked = self.run_cli(
+            "plan-chunks",
+            "--search-plan",
+            str(search_plan),
+            "--chunk-seconds",
+            "300",
+            "--output",
+            str(chunk_plan),
+        )
+
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        self.assertEqual(searched.returncode, 0, searched.stderr)
+        self.assertEqual(chunked.returncode, 0, chunked.stderr)
+        self.assertEqual(
+            json.loads(search_plan.read_text(encoding="utf-8"))[
+                "newRequestIntervals"
+            ],
+            [interval(0, 600_000)],
+        )
+        self.assertEqual(
+            json.loads(chunk_plan.read_text(encoding="utf-8"))["chunks"],
+            [interval(0, 300_000), interval(300_000, 600_000)],
+        )
+
+    def test_cli_reports_duplicate_pending_execution(self):
+        manifest = self.root / "manifest.json"
+        pending = self.root / "pending.json"
+        duplicate_output = self.root / "duplicate.json"
+        spec_path = self.root / "execution-spec.json"
+        artifact_cache.write_json(
+            manifest,
+            artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW),
+        )
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "video": VIDEO_ID,
+                    "route": "gemini-generate-content",
+                    "model": "gemini-test",
+                    "requestedCoverage": [interval(0, 600_000)],
+                    "request": {"contents": []},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        started = self.run_cli(
+            "start-execution",
+            "--manifest",
+            str(manifest),
+            "--execution-spec",
+            str(spec_path),
+            "--output",
+            str(pending),
+            "--started-at",
+            NOW,
+        )
+        duplicate = self.run_cli(
+            "start-execution",
+            "--manifest",
+            str(pending),
+            "--execution-spec",
+            str(spec_path),
+            "--output",
+            str(duplicate_output),
+            "--started-at",
+            LATER,
+        )
+
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertEqual(duplicate.returncode, 3, duplicate.stderr)
+        self.assertEqual(
+            json.loads(duplicate.stdout)["executionStatus"],
+            "pending",
+        )
+        self.assertFalse(duplicate_output.exists())
 
 
 if __name__ == "__main__":

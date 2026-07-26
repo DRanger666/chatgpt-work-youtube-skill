@@ -34,13 +34,19 @@ Credential location:
 - File: `youtube-workbench-secrets.env`
 - File ID: `1rvfVswFWzIoqMOKsJttZgTsRkpbiKxNx`
 
-Research cache:
+Native research artifact cache:
 
-- Folder: `YouTubeResearchCache`
-- Folder ID: `1BVqRlmyVCVsEFhXblmbbSMPIvQ4xoGlB`
-- Record name: `<videoId>--<first16OfRequestSha256>.json`
+- Folder: `YouTubeArtifactCacheV3`
+- Manifest name: `<videoId>--manifest.json`
+- Artifact name: `<videoId>--<kind>--<artifactId>.json`
 
-Prefer stable IDs. Fall back to exact-name search when an ID no longer resolves, and verify the parent folder before use.
+The v3 folder has no stable ID until its first controlled creation. Locate it
+by exact name and require one unambiguous private folder. Record and verify its
+stable ID after creation. Do not search `YouTubeResearchCache` or any cache-v2
+record when a v3 manifest is absent.
+
+Prefer stable IDs after they are established. Fall back to exact-name search
+when an ID no longer resolves, and verify the parent folder before use.
 
 Retrieve credentials in code mode so the connector result is not surfaced. Compare bytes or hashes without printing content. Materialize locally with mode `0600`.
 
@@ -136,42 +142,57 @@ The state may contain bucket aliases, cooldown times, disabled flags, and
 failure classifications. It must not contain credential values or
 fingerprints.
 
-## Cache record lifecycle
+## Artifact cache v3
 
-Create `pending` before the API call. Replace it in place with `succeeded` or
-`failed` afterward. Use schema version 2 and retain all network attempts in one
-record.
+Use `scripts/artifact_cache_v3.py`. Both manifests and artifacts use native
+schema version `1`; the numeral `3` identifies the cache-system generation.
+Production v3 code does not import, search, validate, migrate, or fall back to
+cache v2.
 
-Required fields:
+Represent coverage as normalized half-open integer-millisecond intervals:
 
-- `schemaVersion`
-- `videoId`
-- `videoUrl`
-- `requestFingerprint`
-- `route`
-- `model`
-- `prompt`
-- `status`
-- `attemptStartedAt`
-- `retrySameRequest`
-- `attempts`
+```json
+{"startMs": 0, "endMs": 600000}
+```
 
-Each `attempts` entry may contain:
+Match transcript-like artifacts mechanically by exact artifact kind, contract
+name and version, timestamp basis, and structured language policy. Native
+artifacts use the `full_video` timestamp basis. A `complete` artifact has no
+gaps. `partial` and `truncated` artifacts contribute only `validCoverage`;
+compute missing work from requested coverage minus the union of verified valid
+coverage.
 
-- `bucket`
-- `startedAt`
-- `finishedAt`
-- `httpStatus`
-- `classification`
-- `errorStatus`
-- `retryDelaySeconds`
-- `cooldownUntil`
-- `backoffSeconds`
+The mutable `<videoId>--manifest.json` contains:
 
-Add clip bounds, finish time, final HTTP status, selected bucket alias, model
-version, usage metadata, parsed result, error, and conclusion when applicable.
-Reopen an identical failed record only with a documented permitted retry
-reason. Preserve prior attempts.
+- `schemaVersion`, `cacheSystem`, `videoId`, and `updatedAt`;
+- artifact entries with artifact and Drive file IDs, deterministic filename,
+  kind, contract, timestamp basis, language policy, requested and valid
+  coverage, completion state, gaps, SHA-256 integrity, and execution IDs;
+- safe execution records with canonical fingerprint, pending/completed/failed
+  status, route, model, requested coverage, timestamps, and artifact IDs.
+
+Each immutable artifact contains the same native identity and compatibility
+metadata, its generated content, and safe execution provenance. Its
+content-derived artifact ID excludes only the `artifactId` field. The manifest
+integrity value hashes the exact stored JSON bytes. Never replace an existing
+artifact file; upload a new artifact before adding its entry to the manifest.
+
+Arbitrary analysis artifacts require a human-readable `taskDescription`.
+Expose compatible descriptions for agent review and reuse an analysis artifact
+only after explicit approval of its artifact ID. Do not infer equivalence from
+similar wording.
+
+Before a network call, fingerprint the canonical execution specification,
+including normalized video identity, route, model, requested coverage, and
+request JSON. Store only the fingerprint and safe provenance. An identical
+pending or completed execution blocks submission. A failed execution remains
+in provenance but may create a separately identified guarded attempt; never
+loop automatically.
+
+If a manifest is missing or stale, reconstruct it from verified native
+artifact files and their Drive file IDs. This recovers durable artifacts and
+completed execution provenance without modifying artifact bytes. Pending or
+failed execution-only history cannot be reconstructed from artifacts alone.
 
 Never store:
 
@@ -186,10 +207,13 @@ Never store:
 - Transcript MCP works on captioned Bengali videos and returns timestamp-linked citations.
 - A public captionless 2h15m Hindi movie failed as a single whole-video Gemini request.
 - The same movie succeeded when clipped to `0s`–`1800s`.
-- Treat each clip and prompt as a separate fingerprinted cache item.
-- Offline routing tests cover primary success, project cooldown, fallback,
-  bounded transient retry, terminal request errors, credential failure, and
-  legacy cache migration.
+- Native v3 coverage tests handle exact, containing, composite, overlapping,
+  truncated, incompatible, stale, and missing material without v2 fixtures.
+- Canonical execution guards prevent duplicate pending and completed calls
+  without making fingerprints an artifact-discovery key.
+- Existing offline Gemini-router tests cover primary success, project cooldown,
+  fallback, bounded transient retry, terminal request errors, and credential
+  failure.
 
 ## Primary documentation
 

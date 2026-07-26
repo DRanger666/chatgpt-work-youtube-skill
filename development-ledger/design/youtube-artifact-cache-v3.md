@@ -140,6 +140,30 @@ If comparison with prior results is useful, keep it outside the v3 runtime:
 The validator is optional. Do not create it unless it provides concrete value
 during controlled validation.
 
+## Implementation decisions
+
+- Fix the private Drive namespace as `YouTubeArtifactCacheV3`. Its stable folder
+  ID will be recorded only after controlled live creation; implementation and
+  offline validation do not invent one.
+- Represent requested, valid, covered, and missing ranges as normalized
+  half-open integer-millisecond intervals.
+- Treat contract name/version, timestamp basis, and structured language policy
+  as exact mechanical compatibility dimensions. Do not silently coerce them.
+- Require analysis artifacts to carry a task description and require explicit
+  agent approval of an artifact ID before automatic interval reuse.
+- Derive artifact IDs from canonical artifact content and store a separate
+  SHA-256 of the exact immutable JSON bytes in the manifest.
+- Upload an immutable artifact before replacing the mutable manifest. Rebuild a
+  missing or stale manifest from verified native artifacts and Drive file IDs.
+- Fingerprint a canonical execution specification only after artifact search.
+  Block identical pending or completed executions; retain failed attempts and
+  permit a separately identified retry without automatic looping.
+- Do not implement the optional v2 validator. Native offline fixtures cover the
+  required storage, retrieval, truncation, integrity, and idempotency evidence
+  without introducing a disposable dependency.
+
+No governing-design deviation was required.
+
 ## Test direction
 
 Do not add a byte-for-byte golden request or fixed request-hash regression test

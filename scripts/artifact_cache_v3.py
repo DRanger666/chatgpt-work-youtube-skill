@@ -1062,6 +1062,34 @@ def search_artifacts(manifest, artifact_directory: Path, query):
     }
 
 
+def plan_chunks(intervals, chunk_seconds: int, overlap_seconds: int = 0):
+    if (
+        not isinstance(chunk_seconds, int)
+        or isinstance(chunk_seconds, bool)
+        or chunk_seconds <= 0
+    ):
+        raise CacheV3Error("Chunk size must be a positive integer")
+    if (
+        not isinstance(overlap_seconds, int)
+        or isinstance(overlap_seconds, bool)
+        or overlap_seconds < 0
+        or overlap_seconds >= chunk_seconds
+    ):
+        raise CacheV3Error("Overlap must satisfy 0 <= overlap < chunk size")
+    chunk_ms = chunk_seconds * 1_000
+    overlap_ms = overlap_seconds * 1_000
+    chunks = []
+    for interval in normalize_intervals(intervals, "chunk coverage"):
+        start = interval["startMs"]
+        while start < interval["endMs"]:
+            end = min(start + chunk_ms, interval["endMs"])
+            chunks.append({"startMs": start, "endMs": end})
+            if end == interval["endMs"]:
+                break
+            start = end - overlap_ms
+    return chunks
+
+
 def normalize_execution_spec(spec):
     require_exact_fields(
         spec,
@@ -1306,6 +1334,52 @@ def command_search(args) -> int:
     return 0
 
 
+def command_plan_chunks(args) -> int:
+    search_plan = load_json(Path(args.search_plan))
+    require_exact_fields(
+        search_plan,
+        {
+            "schemaVersion",
+            "cacheSystem",
+            "videoId",
+            "kind",
+            "coverageStatus",
+            "coverageCases",
+            "requestedCoverage",
+            "coveredIntervals",
+            "uncoveredIntervals",
+            "newRequestIntervals",
+            "selectedArtifacts",
+            "incompatibleArtifacts",
+            "reviewCandidates",
+            "requiresAgentReview",
+            "staleManifestEntries",
+        },
+        set(),
+        "search plan",
+    )
+    if (
+        search_plan["schemaVersion"] != SCHEMA_VERSION
+        or search_plan["cacheSystem"] != CACHE_SYSTEM
+    ):
+        raise CacheV3Error("Search plan is not native cache v3")
+    chunks = plan_chunks(
+        search_plan["newRequestIntervals"],
+        args.chunk_seconds,
+        args.overlap_seconds,
+    )
+    output = {
+        "schemaVersion": SCHEMA_VERSION,
+        "cacheSystem": CACHE_SYSTEM,
+        "videoId": search_plan["videoId"],
+        "kind": search_plan["kind"],
+        "chunks": chunks,
+    }
+    write_json(Path(args.output), output)
+    print(Path(args.output).resolve())
+    return 0
+
+
 def command_start_execution(args) -> int:
     manifest = load_json(Path(args.manifest))
     spec = load_json(Path(args.execution_spec))
@@ -1414,6 +1488,13 @@ def build_parser():
     search.add_argument("--query", required=True)
     search.add_argument("--output", required=True)
     search.set_defaults(handler=command_search)
+
+    chunks = subparsers.add_parser("plan-chunks")
+    chunks.add_argument("--search-plan", required=True)
+    chunks.add_argument("--chunk-seconds", required=True, type=int)
+    chunks.add_argument("--overlap-seconds", type=int, default=0)
+    chunks.add_argument("--output", required=True)
+    chunks.set_defaults(handler=command_plan_chunks)
 
     start = subparsers.add_parser("start-execution")
     start.add_argument("--manifest", required=True)

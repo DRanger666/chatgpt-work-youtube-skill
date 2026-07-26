@@ -45,10 +45,15 @@ questions, and whole-video understanding.
 When exact source wording is needed, the request builder also has an explicit
 transcript-only mode that prevents a broad audiovisual-analysis response.
 
-Long videos are analyzed in timestamp-bounded chunks. Every Gemini request is
-fingerprinted and checked against persistent cache before it runs. Successes,
-failures, generated information, and usage totals are saved so the same work
-is not paid for or repeated without a reason.
+Long videos are analyzed in timestamp-bounded chunks. Before constructing a
+Gemini request, the skill searches a per-video manifest for compatible,
+integrity-verified artifacts and composes their interval coverage. Only
+uncovered intervals are generated. Canonical execution fingerprints remain
+last-moment duplicate-call guards and provenance rather than discovery keys.
+
+Native cache-v3 manifests and immutable artifacts live separately in the
+no-space `YouTubeArtifactCacheV3` Drive namespace. This clean-slate system does
+not import, migrate, or fall back to cache-v2 records.
 
 For interactive continuity, the skill can use a second credential belonging to
 a different Google Cloud project. It remains primary-first and sequential:
@@ -108,7 +113,11 @@ Translate and explain what is happening in this captionless video.
 - `scripts/ensure_youtube_mcp.sh` — restore and verify the pinned portable MCP.
 - `scripts/call_youtube_mcp.mjs` — make deterministic MCP calls.
 - `scripts/build_gemini_chunk_request.py` — build timestamp-clipped requests.
-- `scripts/gemini_cache.py` — enforce the Gemini cache-record lifecycle.
+- `scripts/artifact_cache_v3.py` — search compatible artifacts, plan missing
+  coverage, maintain per-video manifests, verify immutable content, and guard
+  duplicate executions.
+- `scripts/gemini_cache.py` — retained cache-v2 implementation; native v3 does
+  not import or call it.
 - `scripts/gemini_request.py` — route requests through healthy project
   credentials with bounded retries and cooldowns.
 - `references/contracts.md` — version, credential, API, and cache contracts.
