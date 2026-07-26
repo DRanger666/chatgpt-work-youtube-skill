@@ -22,32 +22,25 @@ def interval(start, end):
     return {"startMs": start, "endMs": end}
 
 
-def provenance(name="exec-1", fingerprint=None):
-    return [
-        {
-            "executionId": name,
-            "fingerprint": fingerprint or ("a" * 64),
-            "route": "gemini-generate-content",
-            "model": "gemini-test",
-            "startedAt": NOW,
-            "finishedAt": LATER,
-        }
-    ]
-
-
-def metadata(**overrides):
+def metadata(start=0, end=600_000, **overrides):
     value = {
         "video": f"https://youtu.be/{VIDEO_ID}?si=test",
         "kind": "transcript",
         "contract": {"name": "gemini-transcript", "version": 1},
         "timestampBasis": "full_video",
         "languagePolicy": {"mode": "source"},
-        "requestedCoverage": [interval(0, 600_000)],
-        "validCoverage": [interval(0, 600_000)],
-        "completionState": "complete",
+        "validCoverage": [interval(start, end)],
     }
     value.update(overrides)
     return value
+
+
+def content(start=0, end=600_000, text="test"):
+    return {
+        "segments": [
+            {"startMs": start, "endMs": end, "text": text}
+        ]
+    }
 
 
 class ArtifactCacheV3StorageTests(unittest.TestCase):
@@ -59,13 +52,15 @@ class ArtifactCacheV3StorageTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def create_artifact(self, **metadata_overrides):
+    def create_artifact(self, start=0, end=600_000, text="test", **overrides):
         artifact = artifact_cache.build_artifact(
-            metadata(**metadata_overrides),
-            {"segments": [{"startMs": 0, "endMs": 1_000, "text": "test"}]},
-            provenance(),
+            metadata(start, end, **overrides),
+            content(start, end, text),
         )
-        path = artifact_cache.write_immutable_artifact(self.artifacts, artifact)
+        path = artifact_cache.write_immutable_artifact(
+            self.artifacts,
+            artifact,
+        )
         return artifact, path
 
     def test_locates_manifest_in_separate_no_space_namespace(self):
@@ -92,31 +87,43 @@ class ArtifactCacheV3StorageTests(unittest.TestCase):
         )
         self.assertNotIn(" ", artifact_cache.DRIVE_NAMESPACE)
 
-    def test_clean_slate_native_records_start_at_schema_one(self):
+    def test_manifest_and_artifact_are_search_only_schema_one_records(self):
         manifest = artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW)
         artifact, _ = self.create_artifact()
 
+        self.assertEqual(
+            set(manifest),
+            {"schemaVersion", "cacheSystem", "videoId", "artifacts", "updatedAt"},
+        )
         self.assertEqual(manifest["schemaVersion"], 1)
         self.assertEqual(artifact["schemaVersion"], 1)
-        self.assertEqual(
-            manifest["cacheSystem"],
-            "youtube-artifact-cache-v3",
-        )
         serialized = json.dumps({"manifest": manifest, "artifact": artifact})
-        for legacy_field in (
-            "requestFingerprint",
-            "retrySameRequest",
-            "selectedBucket",
-            "schemaVersion\": 2",
+        for forbidden in (
+            "execution",
+            "fingerprint",
+            "provenance",
+            "retry",
+            "lease",
+            "cooldown",
+            "requestedCoverage",
+            "completionState",
+            "gaps",
         ):
-            self.assertNotIn(legacy_field, serialized)
+            self.assertNotIn(forbidden, serialized)
 
-    def test_stores_immutable_artifact_and_indexes_integrity(self):
+    def test_artifact_identity_does_not_depend_on_execution(self):
+        first = artifact_cache.build_artifact(metadata(), content())
+        second = artifact_cache.build_artifact(metadata(), content())
+
+        self.assertEqual(first["artifactId"], second["artifactId"])
+        self.assertEqual(first, second)
+
+    def test_stores_immutable_artifact_and_minimal_manifest_entry(self):
         artifact, artifact_path = self.create_artifact()
         original_bytes = artifact_path.read_bytes()
         manifest = artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW)
 
-        updated = artifact_cache.add_artifact_to_manifest(
+        artifact_cache.add_artifact_to_manifest(
             manifest,
             artifact,
             "drive-file-1",
@@ -125,80 +132,56 @@ class ArtifactCacheV3StorageTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact_path.read_bytes(), original_bytes)
-        self.assertEqual(len(updated["artifacts"]), 1)
-        entry = updated["artifacts"][0]
+        self.assertEqual(len(manifest["artifacts"]), 1)
+        entry = manifest["artifacts"][0]
+        self.assertEqual(
+            set(entry),
+            {
+                "artifactId",
+                "driveFileId",
+                "fileName",
+                "kind",
+                "contract",
+                "timestampBasis",
+                "languagePolicy",
+                "validCoverage",
+                "integrity",
+            },
+        )
         self.assertEqual(entry["artifactId"], artifact["artifactId"])
         self.assertEqual(
             entry["integrity"]["value"],
             artifact_cache.sha256_hex(original_bytes),
         )
-        self.assertEqual(entry["driveFileId"], "drive-file-1")
-        self.assertEqual(updated["executions"][0]["executionId"], "exec-1")
-        self.assertEqual(
-            updated["executions"][0]["artifactIds"],
-            [artifact["artifactId"]],
-        )
 
-    def test_readding_identical_artifact_is_idempotent(self):
-        artifact, artifact_path = self.create_artifact()
+    def test_readding_identical_artifact_is_byte_stable(self):
+        artifact, path = self.create_artifact()
         manifest = artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW)
         artifact_cache.add_artifact_to_manifest(
             manifest,
             artifact,
             "drive-file-1",
-            artifact_path,
+            path,
             updated_at=LATER,
         )
-        snapshot = json.loads(json.dumps(manifest))
+        snapshot = artifact_cache.stored_json_bytes(manifest)
 
         artifact_cache.add_artifact_to_manifest(
             manifest,
             artifact,
             "drive-file-1",
-            artifact_path,
+            path,
             updated_at="2026-07-27T12:02:00Z",
         )
 
-        self.assertEqual(manifest, snapshot)
+        self.assertEqual(artifact_cache.stored_json_bytes(manifest), snapshot)
 
-    def test_readding_repairs_a_missing_execution_reference(self):
-        artifact, artifact_path = self.create_artifact()
-        manifest = artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW)
-        artifact_cache.add_artifact_to_manifest(
-            manifest,
-            artifact,
-            "drive-file-1",
-            artifact_path,
-            updated_at=LATER,
-        )
-        manifest["executions"] = []
-
-        artifact_cache.add_artifact_to_manifest(
-            manifest,
-            artifact,
-            "drive-file-1",
-            artifact_path,
-            updated_at="2026-07-27T12:02:00Z",
-        )
-
-        self.assertEqual(
-            [item["executionId"] for item in manifest["executions"]],
-            ["exec-1"],
-        )
-
-    def test_rebuilds_missing_manifest_from_native_artifacts(self):
-        first, first_path = self.create_artifact()
-        second = artifact_cache.build_artifact(
-            metadata(
-                requestedCoverage=[interval(600_000, 1_200_000)],
-                validCoverage=[interval(600_000, 1_200_000)],
-            ),
-            {"segments": [{"startMs": 600_000, "text": "next"}]},
-            provenance(name="exec-2", fingerprint="b" * 64),
-        )
-        second_path = artifact_cache.write_immutable_artifact(
-            self.artifacts,
-            second,
+    def test_rebuilds_missing_manifest_only_from_native_artifacts(self):
+        first, first_path = self.create_artifact(0, 600_000, text="first")
+        second, second_path = self.create_artifact(
+            600_000,
+            1_200_000,
+            text="second",
         )
 
         rebuilt = artifact_cache.rebuild_manifest(
@@ -211,47 +194,43 @@ class ArtifactCacheV3StorageTests(unittest.TestCase):
             updated_at=LATER,
         )
 
-        self.assertEqual(rebuilt["schemaVersion"], 1)
         self.assertEqual(len(rebuilt["artifacts"]), 2)
+        self.assertNotIn("executions", rebuilt)
         self.assertEqual(
             {item["artifactId"] for item in rebuilt["artifacts"]},
             {first["artifactId"], second["artifactId"]},
         )
-        self.assertEqual(
-            {item["executionId"] for item in rebuilt["executions"]},
-            {"exec-1", "exec-2"},
-        )
 
-    def test_rejects_legacy_fields_in_native_manifest(self):
+    def test_partial_result_is_represented_only_by_valid_coverage(self):
+        artifact, _ = self.create_artifact(0, 420_000)
+
+        self.assertEqual(
+            artifact["validCoverage"],
+            [interval(0, 420_000)],
+        )
+        self.assertNotIn("completionState", artifact)
+        self.assertNotIn("gaps", artifact)
+        self.assertNotIn("requestedCoverage", artifact)
+
+    def test_analysis_artifact_requires_task_description(self):
+        with self.assertRaisesRegex(
+            artifact_cache.CacheV3Error,
+            "require a task description",
+        ):
+            artifact_cache.build_artifact(
+                metadata(kind="question_analysis"),
+                {"observations": []},
+            )
+
+    def test_rejects_execution_fields_in_manifest(self):
         manifest = artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW)
-        manifest["requestFingerprint"] = "a" * 64
+        manifest["executions"] = []
 
         with self.assertRaisesRegex(
             artifact_cache.CacheV3Error,
             "unsupported fields",
         ):
             artifact_cache.validate_manifest(manifest)
-
-    def test_truncated_artifact_stores_only_confirmed_coverage(self):
-        artifact, _ = self.create_artifact(
-            validCoverage=[interval(0, 420_000)],
-            completionState="truncated",
-        )
-
-        self.assertEqual(artifact["validCoverage"], [interval(0, 420_000)])
-        self.assertEqual(artifact["gaps"], [interval(420_000, 600_000)])
-        self.assertEqual(artifact["completionState"], "truncated")
-
-    def test_complete_artifact_cannot_claim_a_gap(self):
-        with self.assertRaisesRegex(
-            artifact_cache.CacheV3Error,
-            "Complete artifacts cannot contain coverage gaps",
-        ):
-            artifact_cache.build_artifact(
-                metadata(validCoverage=[interval(0, 420_000)]),
-                {"segments": []},
-                provenance(),
-            )
 
 
 class ArtifactCacheV3SearchTests(unittest.TestCase):
@@ -270,18 +249,16 @@ class ArtifactCacheV3SearchTests(unittest.TestCase):
         start,
         end,
         *,
-        requested=None,
-        completion_state="complete",
         contract=None,
         language_policy=None,
         task_description=None,
         kind="transcript",
+        text=None,
     ):
         self.counter += 1
         artifact_metadata = metadata(
-            requestedCoverage=requested or [interval(start, end)],
-            validCoverage=[interval(start, end)],
-            completionState=completion_state,
+            start,
+            end,
             contract=contract
             or {"name": "gemini-transcript", "version": 1},
             languagePolicy=language_policy or {"mode": "source"},
@@ -291,13 +268,12 @@ class ArtifactCacheV3SearchTests(unittest.TestCase):
             artifact_metadata["taskDescription"] = task_description
         artifact = artifact_cache.build_artifact(
             artifact_metadata,
-            {"segments": [{"startMs": start, "endMs": end, "text": "test"}]},
-            provenance(
-                name=f"exec-{self.counter}",
-                fingerprint=f"{self.counter:x}".rjust(64, "0"),
-            ),
+            content(start, end, text or f"artifact-{self.counter}"),
         )
-        path = artifact_cache.write_immutable_artifact(self.artifacts, artifact)
+        path = artifact_cache.write_immutable_artifact(
+            self.artifacts,
+            artifact,
+        )
         artifact_cache.add_artifact_to_manifest(
             self.manifest,
             artifact,
@@ -319,103 +295,103 @@ class ArtifactCacheV3SearchTests(unittest.TestCase):
         value.update(overrides)
         return value
 
-    def search(self, query=None):
-        return artifact_cache.search_artifacts(
+    def plan(self, query=None):
+        return artifact_cache.plan_artifact_search(
             self.manifest,
-            self.artifacts,
             query or self.query(),
         )
 
-    def test_exact_coverage_reuses_one_artifact(self):
+    def verify(self, plan, query=None):
+        return artifact_cache.verify_search_plan(
+            self.manifest,
+            self.artifacts,
+            query or self.query(),
+            plan,
+        )
+
+    def test_exact_coverage_plans_then_verifies_one_artifact(self):
         artifact, _ = self.add_artifact(0, 600_000)
 
-        plan = self.search()
+        planned = self.plan()
+        verified = self.verify(planned)
 
-        self.assertEqual(plan["coverageStatus"], "complete")
-        self.assertEqual(plan["coverageCases"], ["exact"])
-        self.assertEqual(plan["newRequestIntervals"], [])
+        self.assertEqual(planned["coverageStatus"], "complete")
+        self.assertEqual(planned["coverageCases"], ["exact"])
         self.assertEqual(
-            plan["selectedArtifacts"][0]["artifactId"],
-            artifact["artifactId"],
+            planned["artifactIdsToFetch"],
+            [artifact["artifactId"]],
         )
+        self.assertEqual(verified["verificationStatus"], "verified")
+        self.assertEqual(verified["artifactIdsToFetch"], [])
+        self.assertEqual(verified["newRequestIntervals"], [])
 
-    def test_empty_clean_slate_manifest_requests_the_whole_interval(self):
-        plan = self.search()
+    def test_manifest_planning_does_not_read_artifact_files(self):
+        artifact, path = self.add_artifact(0, 600_000)
+        path.unlink()
 
-        self.assertEqual(plan["coverageStatus"], "missing")
-        self.assertEqual(plan["coverageCases"], ["missing"])
+        planned = self.plan()
+
         self.assertEqual(
-            plan["newRequestIntervals"],
-            [interval(0, 600_000)],
+            planned["artifactIdsToFetch"],
+            [artifact["artifactId"]],
         )
+        self.assertEqual(planned["verificationStatus"], "fetch_required")
 
     def test_containing_artifact_satisfies_smaller_interval(self):
         self.add_artifact(0, 600_000)
+        query = self.query(120_000, 240_000)
 
-        plan = self.search(self.query(120_000, 240_000))
+        plan = self.plan(query)
 
         self.assertEqual(plan["coverageCases"], ["containing"])
         self.assertEqual(plan["coveredIntervals"], [interval(120_000, 240_000)])
-        self.assertEqual(plan["newRequestIntervals"], [])
 
     def test_adjacent_artifacts_compose_complete_coverage(self):
         self.add_artifact(0, 300_000)
         self.add_artifact(300_000, 600_000)
 
-        plan = self.search()
+        plan = self.plan()
 
-        self.assertEqual(plan["coverageStatus"], "complete")
         self.assertEqual(plan["coverageCases"], ["composite"])
         self.assertEqual(len(plan["selectedArtifacts"]), 2)
         self.assertEqual(plan["newRequestIntervals"], [])
 
-    def test_overlapping_artifacts_compose_without_a_gap(self):
+    def test_overlapping_artifacts_compose_without_gap(self):
         self.add_artifact(0, 360_000)
         self.add_artifact(300_000, 600_000)
 
-        plan = self.search()
+        plan = self.plan()
 
         self.assertEqual(
             plan["coverageCases"],
             ["composite", "overlapping"],
         )
         self.assertEqual(plan["coveredIntervals"], [interval(0, 600_000)])
-        self.assertEqual(plan["uncoveredIntervals"], [])
 
-    def test_only_the_uncovered_gap_needs_a_new_request(self):
+    def test_only_uncovered_gap_becomes_new_work(self):
         self.add_artifact(0, 180_000)
         self.add_artifact(420_000, 600_000)
 
-        plan = self.search()
+        plan = self.plan()
 
         self.assertEqual(plan["coverageStatus"], "partial")
-        self.assertIn("missing", plan["coverageCases"])
         self.assertEqual(
             plan["newRequestIntervals"],
             [interval(180_000, 420_000)],
         )
 
-    def test_truncated_artifact_contributes_only_confirmed_coverage(self):
-        self.add_artifact(
-            0,
-            420_000,
-            requested=[interval(0, 600_000)],
-            completion_state="truncated",
-        )
+    def test_partial_artifact_contributes_only_valid_coverage(self):
+        self.add_artifact(0, 420_000)
 
-        plan = self.search()
+        plan = self.plan()
 
-        self.assertEqual(
-            plan["coverageCases"],
-            ["truncated", "missing"],
-        )
         self.assertEqual(plan["coveredIntervals"], [interval(0, 420_000)])
         self.assertEqual(
             plan["newRequestIntervals"],
             [interval(420_000, 600_000)],
         )
 
-    def test_incompatible_contract_and_language_are_not_reused(self):
+    def test_incompatible_contract_and_language_are_not_selected(self):
         self.add_artifact(
             0,
             600_000,
@@ -423,7 +399,7 @@ class ArtifactCacheV3SearchTests(unittest.TestCase):
             language_policy={"mode": "translated", "target": "en"},
         )
 
-        plan = self.search()
+        plan = self.plan()
 
         self.assertEqual(
             plan["coverageCases"],
@@ -435,248 +411,95 @@ class ArtifactCacheV3SearchTests(unittest.TestCase):
             ["contract", "language_policy"],
         )
 
-    def test_missing_artifact_file_is_reported_as_stale_manifest_state(self):
-        artifact, path = self.add_artifact(0, 600_000)
-        path.unlink()
-
-        plan = self.search()
-
-        self.assertEqual(plan["coverageStatus"], "missing")
-        self.assertEqual(plan["coverageCases"], ["missing"])
-        self.assertEqual(
-            plan["staleManifestEntries"],
-            [
-                {
-                    "artifactId": artifact["artifactId"],
-                    "driveFileId": "drive-file-1",
-                    "fileName": path.name,
-                    "reason": "missing_artifact_file",
-                }
-            ],
-        )
-
-    def test_integrity_failure_is_not_reused(self):
-        artifact, path = self.add_artifact(0, 600_000)
-        path.write_text('{"corrupted":true}\n', encoding="utf-8")
-
-        plan = self.search()
-
-        self.assertEqual(plan["selectedArtifacts"], [])
-        self.assertEqual(
-            plan["staleManifestEntries"][0],
-            {
-                "artifactId": artifact["artifactId"],
-                "driveFileId": "drive-file-1",
-                "fileName": path.name,
-                "reason": "integrity_mismatch",
-            },
-        )
-
-    def test_incompatible_timestamp_basis_is_not_reused(self):
-        self.add_artifact(0, 600_000)
-
-        plan = self.search(self.query(timestampBasis="clip_relative"))
-
-        self.assertEqual(
-            plan["coverageCases"],
-            ["incompatible", "missing"],
-        )
-        self.assertEqual(
-            plan["incompatibleArtifacts"][0]["reasons"],
-            ["timestamp_basis"],
-        )
-
-    def test_analysis_artifact_requires_explicit_agent_approval(self):
+    def test_analysis_artifact_requires_explicit_approval(self):
         artifact, _ = self.add_artifact(
             0,
             600_000,
-            task_description="Identify visual evidence of laboratory methods.",
+            task_description="Identify laboratory-method visuals.",
             kind="question_analysis",
         )
+        query = self.query(kind="question_analysis")
 
-        analysis_query = self.query(kind="question_analysis")
-        first_plan = self.search(analysis_query)
-        approved_plan = self.search(
+        first = self.plan(query)
+        approved = self.plan(
             self.query(
                 kind="question_analysis",
                 agentApprovedArtifactIds=[artifact["artifactId"]],
             )
         )
 
-        self.assertTrue(first_plan["requiresAgentReview"])
-        self.assertEqual(first_plan["selectedArtifacts"], [])
+        self.assertTrue(first["requiresAgentReview"])
+        self.assertEqual(first["selectedArtifacts"], [])
         self.assertEqual(
-            first_plan["reviewCandidates"][0]["taskDescription"],
-            "Identify visual evidence of laboratory methods.",
+            first["reviewCandidates"][0]["taskDescription"],
+            "Identify laboratory-method visuals.",
         )
-        self.assertFalse(approved_plan["requiresAgentReview"])
-        self.assertEqual(approved_plan["coverageCases"], ["exact"])
+        self.assertFalse(approved["requiresAgentReview"])
+        self.assertEqual(approved["coverageCases"], ["exact"])
 
-    def test_analysis_artifact_requires_a_task_description(self):
-        with self.assertRaisesRegex(
-            artifact_cache.CacheV3Error,
-            "require a task description",
-        ):
-            artifact_cache.build_artifact(
-                metadata(kind="question_analysis"),
-                {"observations": []},
-                provenance(),
-            )
+    def test_verification_fetches_only_selected_candidates(self):
+        _, selected_path = self.add_artifact(0, 600_000, text="exact")
+        _, unselected_path = self.add_artifact(0, 900_000, text="larger")
+        plan = self.plan()
+        selected_name = plan["selectedArtifacts"][0]["fileName"]
+        if selected_path.name != selected_name:
+            selected_path, unselected_path = unselected_path, selected_path
+        unselected_path.unlink()
 
+        verified = self.verify(plan)
 
-class ArtifactCacheV3ExecutionGuardTests(unittest.TestCase):
-    def setUp(self):
-        self.manifest = artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW)
+        self.assertEqual(verified["verificationStatus"], "verified")
+        self.assertEqual(verified["staleManifestEntries"], [])
 
-    def execution_spec(self, request=None):
-        return {
-            "video": f"https://youtu.be/{VIDEO_ID}",
-            "route": "gemini-generate-content",
-            "model": "gemini-test",
-            "requestedCoverage": [interval(0, 600_000)],
-            "request": request
-            or {
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [
-                            {
-                                "fileData": {
-                                    "fileUri": f"https://youtu.be/{VIDEO_ID}",
-                                    "mimeType": "video/*",
-                                }
-                            },
-                            {"text": "test"},
-                        ],
-                    }
-                ],
-                "generationConfig": {"maxOutputTokens": 8192},
-            },
+    def test_stale_selected_artifact_replans_before_new_request(self):
+        first, first_path = self.add_artifact(0, 600_000, text="first")
+        second, second_path = self.add_artifact(0, 600_000, text="second")
+        plan = self.plan()
+        selected_id = plan["selectedArtifacts"][0]["artifactId"]
+        path_by_id = {
+            first["artifactId"]: first_path,
+            second["artifactId"]: second_path,
         }
+        path_by_id[selected_id].unlink()
 
-    def test_execution_fingerprint_is_canonical_not_raw_serialization(self):
-        first = self.execution_spec()
-        second = {
-            "request": {
-                "generationConfig": {"maxOutputTokens": 8192},
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "fileData": {
-                                    "mimeType": "video/*",
-                                    "fileUri": (
-                                        "https://www.youtube.com/watch"
-                                        f"?v={VIDEO_ID}&feature=shared"
-                                    ),
-                                }
-                            },
-                            {"text": "test"},
-                        ],
-                        "role": "user",
-                    }
-                ],
-            },
-            "requestedCoverage": [interval(0, 600_000)],
-            "model": "gemini-test",
-            "route": "gemini-generate-content",
-            "video": f"https://www.youtube.com/watch?v={VIDEO_ID}",
-        }
+        replanned = self.verify(plan)
 
+        self.assertEqual(len(replanned["staleManifestEntries"]), 1)
         self.assertEqual(
-            artifact_cache.execution_fingerprint(first),
-            artifact_cache.execution_fingerprint(second),
+            replanned["staleManifestEntries"][0]["artifactId"],
+            selected_id,
         )
-
-    def test_pending_execution_blocks_identical_submission(self):
-        first = artifact_cache.start_execution(
-            self.manifest,
-            self.execution_spec(),
-            started_at=NOW,
+        self.assertEqual(replanned["verificationStatus"], "fetch_required")
+        self.assertNotEqual(
+            replanned["artifactIdsToFetch"],
+            [selected_id],
         )
+        verified = self.verify(replanned)
+        self.assertEqual(verified["verificationStatus"], "verified")
 
-        with self.assertRaises(artifact_cache.DuplicateExecutionError) as caught:
-            artifact_cache.start_execution(
-                self.manifest,
-                self.execution_spec(),
-                started_at=LATER,
-            )
+    def test_integrity_failure_is_replanned_as_stale(self):
+        artifact, path = self.add_artifact(0, 600_000)
+        plan = self.plan()
+        path.write_text('{"corrupted":true}\n', encoding="utf-8")
 
-        self.assertEqual(caught.exception.execution["executionId"], first["executionId"])
-        self.assertEqual(caught.exception.execution["status"], "pending")
+        replanned = self.verify(plan)
 
-    def test_completed_execution_blocks_identical_submission(self):
-        execution = artifact_cache.start_execution(
-            self.manifest,
-            self.execution_spec(),
-            started_at=NOW,
-        )
-        artifact_cache.finish_execution(
-            self.manifest,
-            execution["executionId"],
-            "completed",
-            artifact_ids=["a" * 64],
-            finished_at=LATER,
-        )
-
-        with self.assertRaises(artifact_cache.DuplicateExecutionError):
-            artifact_cache.start_execution(
-                self.manifest,
-                self.execution_spec(),
-            )
-
-    def test_failed_execution_allows_a_new_guarded_attempt(self):
-        first = artifact_cache.start_execution(
-            self.manifest,
-            self.execution_spec(),
-            started_at=NOW,
-        )
-        artifact_cache.finish_execution(
-            self.manifest,
-            first["executionId"],
-            "failed",
-            finished_at=LATER,
-        )
-
-        second = artifact_cache.start_execution(
-            self.manifest,
-            self.execution_spec(),
-            started_at="2026-07-27T12:02:00Z",
-        )
-
-        self.assertNotEqual(first["executionId"], second["executionId"])
-        self.assertEqual(first["fingerprint"], second["fingerprint"])
-        self.assertTrue(second["executionId"].endswith("-2"))
-
-    def test_pending_execution_yields_safe_artifact_provenance(self):
-        execution = artifact_cache.start_execution(
-            self.manifest,
-            self.execution_spec(),
-            started_at=NOW,
-        )
-
-        result = artifact_cache.provenance_for_execution(
-            self.manifest,
-            execution["executionId"],
-            finished_at=LATER,
-        )
-
+        self.assertEqual(replanned["selectedArtifacts"], [])
         self.assertEqual(
-            result,
+            replanned["staleManifestEntries"],
             [
                 {
-                    "executionId": execution["executionId"],
-                    "fingerprint": execution["fingerprint"],
-                    "route": "gemini-generate-content",
-                    "model": "gemini-test",
-                    "startedAt": NOW,
-                    "finishedAt": LATER,
+                    "artifactId": artifact["artifactId"],
+                    "driveFileId": "drive-file-1",
+                    "fileName": path.name,
+                    "reason": "integrity_mismatch",
                 }
             ],
         )
-        serialized = json.dumps(result)
-        self.assertNotIn("request", serialized)
-        self.assertNotIn("credential", serialized)
+        self.assertEqual(
+            replanned["newRequestIntervals"],
+            [interval(0, 600_000)],
+        )
 
 
 class ArtifactCacheV3ChunkPlanningTests(unittest.TestCase):
@@ -712,8 +535,6 @@ class ArtifactCacheV3CliTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        self.artifacts = self.root / "artifacts"
-        self.artifacts.mkdir()
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -726,40 +547,57 @@ class ArtifactCacheV3CliTests(unittest.TestCase):
             check=False,
         )
 
-    def test_empty_manifest_search_and_chunk_plan(self):
-        manifest = self.root / "manifest.json"
-        query_path = self.root / "query.json"
-        search_plan = self.root / "search-plan.json"
-        chunk_plan = self.root / "chunk-plan.json"
-        query_path.write_text(
-            json.dumps(
-                {
-                    "video": VIDEO_ID,
-                    "kind": "transcript",
-                    "contract": {"name": "gemini-transcript", "version": 1},
-                    "timestampBasis": "full_video",
-                    "languagePolicy": {"mode": "source"},
-                    "requestedCoverage": [interval(0, 600_000)],
-                }
-            ),
-            encoding="utf-8",
-        )
+    def test_empty_manifest_requires_prior_artifact_enumeration(self):
+        output = self.root / "manifest.json"
 
-        initialized = self.run_cli(
+        refused = self.run_cli(
             "init-manifest",
             "--video",
             VIDEO_ID,
             "--output",
-            str(manifest),
+            str(output),
+        )
+        created = self.run_cli(
+            "init-manifest",
+            "--video",
+            VIDEO_ID,
+            "--output",
+            str(output),
+            "--confirmed-no-artifacts",
             "--updated-at",
             NOW,
         )
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertFalse("Traceback" in refused.stderr)
+        self.assertEqual(created.returncode, 0, created.stderr)
+        self.assertTrue(output.exists())
+
+    def test_empty_two_phase_search_and_chunk_plan(self):
+        manifest = self.root / "manifest.json"
+        query_path = self.root / "query.json"
+        search_plan = self.root / "search-plan.json"
+        chunk_plan = self.root / "chunk-plan.json"
+        artifact_cache.write_json(
+            manifest,
+            artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW),
+        )
+        artifact_cache.write_json(
+            query_path,
+            {
+                "video": VIDEO_ID,
+                "kind": "transcript",
+                "contract": {"name": "gemini-transcript", "version": 1},
+                "timestampBasis": "full_video",
+                "languagePolicy": {"mode": "source"},
+                "requestedCoverage": [interval(0, 600_000)],
+            },
+        )
+
         searched = self.run_cli(
             "search",
             "--manifest",
             str(manifest),
-            "--artifacts-dir",
-            str(self.artifacts),
             "--query",
             str(query_path),
             "--output",
@@ -775,72 +613,12 @@ class ArtifactCacheV3CliTests(unittest.TestCase):
             str(chunk_plan),
         )
 
-        self.assertEqual(initialized.returncode, 0, initialized.stderr)
         self.assertEqual(searched.returncode, 0, searched.stderr)
         self.assertEqual(chunked.returncode, 0, chunked.stderr)
-        self.assertEqual(
-            json.loads(search_plan.read_text(encoding="utf-8"))[
-                "newRequestIntervals"
-            ],
-            [interval(0, 600_000)],
-        )
         self.assertEqual(
             json.loads(chunk_plan.read_text(encoding="utf-8"))["chunks"],
             [interval(0, 300_000), interval(300_000, 600_000)],
         )
-
-    def test_cli_reports_duplicate_pending_execution(self):
-        manifest = self.root / "manifest.json"
-        pending = self.root / "pending.json"
-        duplicate_output = self.root / "duplicate.json"
-        spec_path = self.root / "execution-spec.json"
-        artifact_cache.write_json(
-            manifest,
-            artifact_cache.new_manifest(VIDEO_ID, updated_at=NOW),
-        )
-        spec_path.write_text(
-            json.dumps(
-                {
-                    "video": VIDEO_ID,
-                    "route": "gemini-generate-content",
-                    "model": "gemini-test",
-                    "requestedCoverage": [interval(0, 600_000)],
-                    "request": {"contents": []},
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        started = self.run_cli(
-            "start-execution",
-            "--manifest",
-            str(manifest),
-            "--execution-spec",
-            str(spec_path),
-            "--output",
-            str(pending),
-            "--started-at",
-            NOW,
-        )
-        duplicate = self.run_cli(
-            "start-execution",
-            "--manifest",
-            str(pending),
-            "--execution-spec",
-            str(spec_path),
-            "--output",
-            str(duplicate_output),
-            "--started-at",
-            LATER,
-        )
-
-        self.assertEqual(started.returncode, 0, started.stderr)
-        self.assertEqual(duplicate.returncode, 3, duplicate.stderr)
-        self.assertEqual(
-            json.loads(duplicate.stdout)["executionStatus"],
-            "pending",
-        )
-        self.assertFalse(duplicate_output.exists())
 
 
 if __name__ == "__main__":
