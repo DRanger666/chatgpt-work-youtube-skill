@@ -114,8 +114,11 @@ Translate and explain what is happening in this captionless video.
 - `scripts/call_youtube_mcp.mjs` — make deterministic MCP calls.
 - `scripts/build_gemini_chunk_request.py` — build timestamp-clipped requests.
 - `scripts/artifact_cache_v3.py` — search compatible artifacts, plan missing
-  coverage, maintain per-video manifests, verify immutable content, and guard
-  duplicate executions.
+  coverage, maintain search-only per-video manifests, and verify selected
+  immutable content.
+- `scripts/gemini_execution_journal_v3.py` — preserve native Gemini execution
+  lifecycle, router attempts, retry authorization, recovery, and per-video
+  writer state independently of artifact discovery.
 - `scripts/gemini_cache.py` — retained cache-v2 implementation; native v3 does
   not import or call it.
 - `scripts/gemini_request.py` — route requests through healthy project

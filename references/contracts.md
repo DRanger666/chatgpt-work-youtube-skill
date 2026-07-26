@@ -1,5 +1,15 @@
 # YouTube workflow contracts
 
+## Contents
+
+- [Local installation](#local-installation)
+- [Google Drive](#google-drive)
+- [Gemini clipped request](#gemini-clipped-request)
+- [Interactive Gemini quota pool](#interactive-gemini-quota-pool)
+- [Artifact cache v3](#artifact-cache-v3)
+- [Validated behavior](#validated-behavior)
+- [Primary documentation](#primary-documentation)
+
 ## Local installation
 
 Use this exact no-space layout:
@@ -39,6 +49,7 @@ Native research artifact cache:
 - Folder: `YouTubeArtifactCacheV3`
 - Manifest name: `<videoId>--manifest.json`
 - Artifact name: `<videoId>--<kind>--<artifactId>.json`
+- Gemini execution journal name: `<videoId>--gemini-executions.json`
 
 The v3 folder has no stable ID until its first controlled creation. Locate it
 by exact name and require one unambiguous private folder. Record and verify its
@@ -144,10 +155,11 @@ fingerprints.
 
 ## Artifact cache v3
 
-Use `scripts/artifact_cache_v3.py`. Both manifests and artifacts use native
-schema version `1`; the numeral `3` identifies the cache-system generation.
-Production v3 code does not import, search, validate, migrate, or fall back to
-cache v2.
+Use `scripts/artifact_cache_v3.py` for reusable material and
+`scripts/gemini_execution_journal_v3.py` for Gemini lifecycle. Native
+artifacts, manifests, and execution journals each start at schema version `1`;
+the numeral `3` identifies the cache-system generation. Production v3 code
+does not import, search, validate, migrate, or fall back to cache v2.
 
 Represent coverage as normalized half-open integer-millisecond intervals:
 
@@ -157,42 +169,93 @@ Represent coverage as normalized half-open integer-millisecond intervals:
 
 Match transcript-like artifacts mechanically by exact artifact kind, contract
 name and version, timestamp basis, and structured language policy. Native
-artifacts use the `full_video` timestamp basis. A `complete` artifact has no
-gaps. `partial` and `truncated` artifacts contribute only `validCoverage`;
-compute missing work from requested coverage minus the union of verified valid
-coverage.
+artifacts use the `full_video` timestamp basis and expose only verified
+`validCoverage`. Compute current gaps from requested coverage minus the union
+of compatible valid coverage. Keep requested execution coverage and produced
+artifact references in the execution journal; do not persist truncation events
+or derived request gaps in artifact-search records.
 
 The mutable `<videoId>--manifest.json` contains:
 
 - `schemaVersion`, `cacheSystem`, `videoId`, and `updatedAt`;
 - artifact entries with artifact and Drive file IDs, deterministic filename,
-  kind, contract, timestamp basis, language policy, requested and valid
-  coverage, completion state, gaps, SHA-256 integrity, and execution IDs;
-- safe execution records with canonical fingerprint, pending/completed/failed
-  status, route, model, requested coverage, timestamps, and artifact IDs.
+  kind, contract, timestamp basis, language policy, valid coverage, and exact
+  stored-byte SHA-256 integrity;
+- a human-readable `taskDescription` only when an analysis artifact requires
+  explicit agent review.
 
-Each immutable artifact contains the same native identity and compatibility
-metadata, its generated content, and safe execution provenance. Its
-content-derived artifact ID excludes only the `artifactId` field. The manifest
-integrity value hashes the exact stored JSON bytes. Never replace an existing
+The manifest contains no execution IDs, fingerprints, provenance, lifecycle,
+attempts, routing, retry reasons, leases, cooldowns, requested execution
+coverage, stored request gaps, or truncation events. Modify it only when the
+searchable artifact set or content-side index metadata changes.
+
+Each immutable artifact contains reusable generated content and the
+compatibility metadata required to interpret and validate it. Derive
+`artifactId` from that canonical reusable record without execution provenance.
+The same reusable material therefore retains the same identity when a
+different execution produces or verifies it. Never replace an existing
 artifact file; upload a new artifact before adding its entry to the manifest.
 
-Arbitrary analysis artifacts require a human-readable `taskDescription`.
-Expose compatible descriptions for agent review and reuse an analysis artifact
-only after explicit approval of its artifact ID. Do not infer equivalence from
-similar wording.
+Plan from manifest metadata before downloading artifact content. Download and
+integrity-check only selected reuse or analysis-review candidates. Replan
+around missing, stale, or invalid selected files before constructing any new
+Gemini request.
 
-Before a network call, fingerprint the canonical execution specification,
-including normalized video identity, route, model, requested coverage, and
-request JSON. Store only the fingerprint and safe provenance. An identical
-pending or completed execution blocks submission. A failed execution remains
-in provenance but may create a separately identified guarded attempt; never
-loop automatically.
+If a manifest is missing, enumerate native artifacts for that video first.
+Reconstruct the manifest from verified artifact files and Drive file IDs when
+any exist. Initialize an empty manifest only after enumeration confirms that no
+native artifacts exist. Manifest recovery never reads, rewrites, erases, or
+resets the execution journal.
 
-If a manifest is missing or stale, reconstruct it from verified native
-artifact files and their Drive file IDs. This recovers durable artifacts and
-completed execution provenance without modifying artifact bytes. Pending or
-failed execution-only history cannot be reconstructed from artifacts alone.
+### Gemini execution journal
+
+The deterministic `<videoId>--gemini-executions.json` journal owns:
+
+- normalized video identity and canonical execution fingerprints;
+- route, model, and requested coverage;
+- pending, completed, failed, and reconciled abandonment history;
+- session-specific writer ownership and lease expiry;
+- every safe network attempt from `ROUTING_JSON`;
+- selected bucket, retry delay, backoff, cooldown, failure classification, and
+  earliest available cooldown when present;
+- documented authorization for each identical failed or abandoned retry;
+- reconciliation, handoff, and abandonment evidence; and
+- one-way references from completed executions to produced artifact IDs.
+
+Artifacts and manifests never point back to executions. Rebuilding a manifest
+does not change execution history or attempt numbering.
+
+Before credential selection, acquire the supported per-video writer, reread
+the latest manifest, and repeat artifact planning and selected-file
+verification. Build the request only for still-uncovered work, start its
+execution, save the pending journal to Drive, and only then invoke
+`gemini_request.py`. Finalize both successes and failures with the exact safe
+routing metadata. Preserve primary, fallback, and bounded transient attempts
+as separate entries. A failure caused by no healthy bucket may contain zero
+network attempts but must retain its earliest cooldown.
+
+An identical pending or completed execution blocks submission. An identical
+failed or abandoned execution requires a non-empty recorded retry reason.
+Never retry `INVALID_ARGUMENT` or another terminal request failure unchanged.
+
+### Single-writer operating contract
+
+The initial release supports one write-capable Work session per normalized
+YouTube video ID. Writing includes Gemini submission, journal mutation,
+artifact publication, and manifest creation, replacement, repair, or removal.
+Concurrent sessions may inspect and reuse the same video's artifacts read-only.
+Different normalized video IDs may have independent writers.
+
+An active different owner blocks the same video's write path. Lease expiry
+triggers reconciliation; it does not grant ownership or prove the old writer
+stopped. When termination is uncertain, require human confirmation before
+recording reconciliation, handoff, or abandonment and proceeding.
+
+Drive replacement supplies no atomic compare-and-set. Do not claim
+Drive-enforced mutual exclusion, safe concurrent same-video writes,
+cross-session at-most-once execution, or exactly-once execution. This is a
+supported-use constraint. A future atomic coordinator may replace it without
+changing artifact identity or manifest search fields.
 
 Never store:
 
@@ -208,9 +271,14 @@ Never store:
 - A public captionless 2h15m Hindi movie failed as a single whole-video Gemini request.
 - The same movie succeeded when clipped to `0s`–`1800s`.
 - Native v3 coverage tests handle exact, containing, composite, overlapping,
-  truncated, incompatible, stale, and missing material without v2 fixtures.
-- Canonical execution guards prevent duplicate pending and completed calls
-  without making fingerprints an artifact-discovery key.
+  partial-valid, incompatible, stale, and missing material without v2 fixtures.
+- Manifest-first planning downloads only selected artifacts and replans around
+  verification failures.
+- Native journals preserve router attempts, retry authorization, pending
+  recovery, handoff, abandonment, and one-way artifact references independently
+  of manifest recovery.
+- Canonical execution guards prevent duplicate pending and completed calls,
+  require reasons for failed retries, and reject unchanged terminal failures.
 - Existing offline Gemini-router tests cover primary success, project cooldown,
   fallback, bounded transient retry, terminal request errors, and credential
   failure.

@@ -15,9 +15,13 @@ Use a transcript-first, cache-first workflow. Rebuild missing local tooling auto
 - Never store a credential in a research cache record.
 - Search native v3 artifacts before constructing a Gemini request.
 - Use `YouTubeArtifactCacheV3`; never fall back to cache v2.
-- Keep artifact files immutable and update only the per-video manifest.
+- Keep artifact files immutable and the per-video manifest search-only.
+- Keep Gemini lifecycle in the separate native execution journal.
 - Record every Gemini attempt, including failures.
 - Never submit an identical pending or completed execution.
+- Never repeat an identical failed execution without a documented permitted
+  reason; never repeat a terminal request failure unchanged.
+- Permit only one write-capable Work session per normalized video ID.
 - Keep generated research separate from credentials.
 - Keep Gemini video requests sequential; do not parallelize chunks across
   credentials.
@@ -87,49 +91,81 @@ through the native v3 workflow.
 Store an incomplete or truncated response as an immutable artifact, but index
 only its confirmed valid coverage. Search again and process the unfinished
 interval with smaller clips and new execution fingerprints. Never recover by
-repeating an identical pending or completed execution.
+repeating the identical request.
 
 ## Search and update artifact cache v3
 
 Read the native schemas and file lifecycle in
 [references/contracts.md](references/contracts.md). Use
-`scripts/artifact_cache_v3.py` for every v3 operation.
+`scripts/artifact_cache_v3.py` for artifact discovery and
+`scripts/gemini_execution_journal_v3.py` for Gemini execution state.
 
 Before constructing a Gemini request:
 
 1. Run `locate --video VIDEO` and find the exact
    `<videoId>--manifest.json` file in `YouTubeArtifactCacheV3`.
-2. If the manifest is absent, initialize an empty native manifest locally. Do
-   not search cache v2.
-3. Materialize the manifest's same-kind candidate artifacts by their Drive file
-   IDs.
-4. Write a query describing artifact kind, contract, full-video interval,
-   timestamp basis, and language policy; then run `search`.
-5. Verify selected artifact integrity. For analysis artifacts, inspect the task
-   descriptions and explicitly approve only artifacts that answer the current
-   question.
-6. Reuse complete coverage. Pass only `newRequestIntervals` to `plan-chunks`;
-   construct no request for already covered intervals.
+2. If the manifest is absent, enumerate the video's native artifact files.
+   Download and run `rebuild-manifest` when any exist. Run `init-manifest
+   --confirmed-no-artifacts` only after confirming that none exist. Do not
+   initialize empty state merely because the manifest is missing.
+3. Write a query describing artifact kind, contract, full-video interval,
+   timestamp basis, and language policy; then run `search`. This first phase
+   reads manifest metadata only.
+4. Inspect analysis review candidates and approve only artifacts that answer
+   the current question. Download only the Drive files listed in
+   `artifactIdsToFetch`.
+5. Run `verify-search` against those selected files. If verification reports
+   stale material and selects replacements, download only the new
+   `artifactIdsToFetch` and repeat verification.
+6. Reuse only a verified plan. Pass only its `newRequestIntervals` to
+   `plan-chunks`; construct no request for covered intervals.
 
 Immediately before each unavoidable network execution:
 
-1. Build the request and a canonical execution-spec JSON file.
-2. Run `start-execution` against the current manifest. Stop when it reports an
-   identical pending or completed execution.
-3. Replace the Drive manifest with the pending version before sending the
-   request.
-4. Run `scripts/gemini_request.py` sequentially.
-5. On failure, run `finish-execution --status failed` and replace the manifest.
-   Do not loop automatically.
-6. On success, derive `execution-provenance`, create the native artifact, and
-   upload that new artifact file without replacing any prior artifact.
-7. Finish the execution as completed with the artifact ID, add the artifact
-   using its returned Drive file ID, and replace the mutable manifest.
+1. Establish the supported single writer for the normalized video ID. Other
+   sessions may reuse artifacts read-only but must not call Gemini, mutate the
+   journal, publish an artifact, or update that video's manifest.
+2. Locate `<videoId>--gemini-executions.json`. Initialize it with
+   `init-journal --confirmed-no-journal` only after exact-name lookup confirms
+   that no journal exists. Use a new session-specific owner ID and
+   `acquire-writer`, then replace the Drive journal with the acquired state.
+3. Stop if another owner is active. Expiry triggers reconciliation; it never
+   grants ownership automatically. Require human confirmation when the prior
+   writer's termination is uncertain, and preserve handoff or abandonment
+   evidence.
+4. After acquiring ownership, reread the latest manifest and repeat its
+   metadata search and selected-artifact verification. Stop if it now covers
+   the work; this closes the handoff window between read-only planning and
+   writer acquisition.
+5. Build the request and canonical execution-spec JSON only for verified
+   uncovered work. Run journal `start-execution`, supplying `--retry-reason`
+   only for an identical non-terminal failed or abandoned execution.
+6. Replace the Drive journal with the pending state before selecting a Gemini
+   credential or sending the request.
+7. Run `scripts/gemini_request.py` sequentially and retain its
+   `ROUTING_JSON`. On failure, run journal `finish-execution --status failed`
+   with that metadata and replace the Drive journal, even when no bucket was
+   available. Store no artifact and leave the manifest byte-stable.
+8. On success, create and upload the immutable artifact without execution
+   provenance. Run journal `finish-execution --status completed` with
+   `ROUTING_JSON` and its artifact ID, replace the Drive journal, add the
+   artifact to the manifest using its Drive file ID, and replace the manifest.
+9. After all pending work is finalized and durable, run `release-writer` with
+   the completion or handoff reason and replace the Drive journal.
 
 If an artifact upload succeeds but the manifest update fails, retain the
 artifact and rebuild the manifest from native artifact files and verified Drive
-file IDs. Never rewrite immutable artifact content. Execution fingerprints are
-provenance and duplicate-call guards only; do not use them for artifact search.
+file IDs. If any post-request journal update fails, reconcile the pending
+execution from its saved routing metadata and artifacts; do not repeat Gemini.
+Never rewrite immutable artifact content. Execution fingerprints identify
+execution specifications for audit and duplicate-call prevention only; they do
+not identify or discover reusable artifacts.
+
+The single-writer rule is per normalized video ID, not global. Different videos
+may have independent writers. Drive replacement does not enforce mutual
+exclusion, exactly-once execution, or safe concurrent same-video writes. Leases
+support recovery and diagnosis only; an expired lease does not prove that the
+old writer stopped.
 
 ## Route Gemini requests conservatively
 
