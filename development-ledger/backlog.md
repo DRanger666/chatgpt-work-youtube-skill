@@ -54,24 +54,24 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
-## Active saved-work release corrections
+## Active Gemini-response and video-material release corrections
 
 The earlier implementation remains useful evidence, but its public names and
 its automatic crash-handling design are not the release specification. The
 three reopened items below are governed by
 [`design/youtube-saved-work.md`](design/youtube-saved-work.md).
 
-### LEDGER-008 — Find and reuse saved video outputs before Gemini
+### LEDGER-008 — Find and reuse video material before Gemini
 
 - Status: Reopened — release blocker
 - Type: Design correction and implementation
-- Layer: Saved-work search and request planning
+- Layer: Video-material search and request planning
 - Problem: A request-file hash can identify an earlier Gemini request, but it
-  cannot answer whether saved transcripts or analyses already satisfy the
-  user's present task.
-- Goal: Search saved work by video ID, output type, output format, language,
-  timestamp policy, and verified covered time. Construct Gemini requests only
-  for time ranges that remain missing.
+  cannot answer whether reusable transcripts or other source material already
+  satisfy the user's present need.
+- Goal: Search the video material index by video ID, output type, output
+  format, language, timestamp policy, and verified covered time. Construct a
+  Gemini request only for material or visual evidence that remains missing.
 - Evidence retained from the earlier implementation:
   - Exact, containing, combined, overlapping, incomplete, incompatible, stale,
     and missing time-range planning worked offline.
@@ -85,28 +85,32 @@ three reopened items below are governed by
     per-video list as a manifest.
 - Required release work:
   - [ ] Replace `scripts/artifact_cache_v3.py` with
-        `scripts/saved_video_outputs.py`; do not leave a compatibility wrapper.
-  - [ ] Plan from `<videoId>--output-index.json`, then download and verify only
-        the selected saved-output files.
+        `scripts/saved_gemini_responses.py`; do not leave a compatibility
+        wrapper.
+  - [ ] Plan from `<videoId>--video-material-index.json`, then download and
+        verify only the selected saved-response files.
   - [ ] Derive transcript covered time mechanically from the checked Gemini
         response and its actual requested clip. Never accept it from a caller.
-  - [ ] Require task-description review before treating an earlier arbitrary
-        analysis as an answer to a new question.
+  - [ ] Exclude `task_specific_observation` and `direct_answer` responses from
+        ordinary material search, regardless of prompt similarity.
+  - [ ] When reusable material leaves a visual-sensory gap, request a narrowly
+        scoped `task_specific_observation` and let ChatGPT reason over it.
   - [ ] Return only missing time ranges for new request construction.
-  - [ ] Re-run the full saved-work search matrix, including malformed,
-        incomplete, and mismatched-clip transcript responses.
+  - [ ] Re-run the full material-search matrix, including malformed,
+        incomplete, mismatched-clip, excluded-class, and systematic-OCR
+        responses.
 
-### LEDGER-009 — Maintain a per-video output index and self-contained outputs
+### LEDGER-009 — Maintain a video material index and saved Gemini responses
 
 - Status: Reopened — release blocker
 - Type: Design correction and implementation
-- Layer: Google Drive saved-work files
+- Layer: Google Drive response and material files
 - Problem: Request-hash filenames cannot enumerate useful work for one video,
   while the earlier replacement used generic file names and split information
   in a way that made its promised index rebuilding unreliable.
-- Goal: Keep one predictable per-video output index and separate, never-edited
-  saved-output files. Each saved-output file must preserve the exact Gemini
-  response and enough checked content information to rebuild the index.
+- Goal: Keep one predictable per-video material index and separate,
+  never-edited saved-response files. Every successful response is preserved,
+  while only predeclared `video_material` may enter ordinary search.
 - Evidence retained from the earlier implementation:
   - Per-video lookup, separate output files, file-integrity checking, and index
     rebuilding worked offline under the earlier names.
@@ -119,19 +123,30 @@ three reopened items below are governed by
     the governing design.
 - Required release work:
   - [ ] Use the `YouTubeVideoWork` Drive folder,
-        `<videoId>--output-index.json`, and
-        `<videoId>--saved-output--<savedOutputId>.json`.
+        `<videoId>--video-material-index.json`, and
+        `<videoId>--gemini-response--<savedResponseId>.json`.
   - [ ] Use file-format field names defined in `youtube-saved-work.md`; remove
         the old artifact, manifest, contract, and valid-coverage field names.
   - [ ] Keep request status, attempts, cooldowns, retry reasons, and session
-        information out of the video output index, saved-output file, and
-        saved-output identity.
-  - [ ] Save every successful Gemini response in a self-contained saved-output
-        file during the normal workflow, including unusable responses.
-  - [ ] Add only checked, reusable outputs to the index. A malformed transcript
-        must contribute no covered time.
-  - [ ] Rebuild a missing index from saved-output files. Do not create an empty
-        index until enumeration confirms that no reusable file exists.
+        information out of the video material index, saved-response file, and
+        saved-response identity.
+  - [ ] Save every successful Gemini response in full, including a malformed
+        structured response and every task-specific observation or direct
+        answer.
+  - [ ] Copy the requested source time range into each saved response and its
+        identity so identical text from different video intervals cannot
+        collapse into one record.
+  - [ ] Remove the global `reusable` and `unusableReason` fields. Treat material
+        index admission as the reuse decision; do not replace them with general
+        `contentCheckStatus` or `contentCheckFailure` fields.
+  - [ ] Run a deterministic format checker exactly when the declared output
+        format requires it. A free-form format must not receive a fabricated
+        check status.
+  - [ ] Add only `video_material` to the index. A malformed transcript must
+        contribute no covered time even though its response remains saved.
+  - [ ] Rebuild a missing index from saved responses whose predeclared class is
+        `video_material`. Do not create an empty index until response
+        enumeration confirms that no qualifying file can be admitted.
   - [ ] Keep normal operation completely separate from cache-v2 files; add no
         migration, fallback, validator, or permanent compatibility path.
 
@@ -162,18 +177,29 @@ three reopened items below are governed by
   - [ ] Replace `scripts/gemini_execution_journal_v3.py` with
         `scripts/gemini_request_log.py`; do not leave a compatibility wrapper.
   - [ ] Build each pending entry by reading the actual request file. Store its
-        exact-file hash, normalized-request hash, video ID, clip, endpoint,
-        model, and method.
+        exact prompt, exact-file hash, normalized-request hash, video ID, clip,
+        endpoint, model, method, predeclared `contentClass`, `outputType`, and
+        `outputFormat`.
   - [ ] Make `gemini_request.py` verify that same information and the pending
         request status before loading a credential.
+  - [ ] Bind content class, output type, and output format immutably to the
+        pending entry without adding local classification to request identity.
+        Reject conflicting metadata for an existing request ID and reject a
+        caller's attempt to replace it after the call.
+  - [ ] Let a purpose-specific builder fix an unambiguous class, including
+        `video_material` for transcript mode. Require the generic prompt route
+        to declare its class explicitly; do not supply a silent default.
   - [ ] Use `fileFormatVersion` and the plain request-log field names in the
         request log, routing metadata, and local bucket-state file; update the
         operational documents and tests in the same implementation commit.
   - [ ] Persist every safe primary, fallback, transient, failed, and successful
         routing attempt. Preserve earlier attempts through an authorized retry.
   - [ ] Enforce saved cooldowns and reject unchanged terminal request errors.
-  - [ ] Require a saved-output reference before marking a successful request
-        `succeeded`, even when the saved output is unusable.
+  - [ ] Require a saved-response reference before marking any successful
+        request `succeeded`, including a failed-format response,
+        task-specific observation, or direct answer. Retain its Drive file ID
+        and file SHA-256 so non-indexed responses remain directly retrievable
+        and verifiable.
   - [ ] Use only `pending`, `succeeded`, `failed`, and `interrupted` request
         states. An old pending request must stop and ask the user; elapsed time
         alone must not authorize another call.
@@ -184,7 +210,9 @@ three reopened items below are governed by
         lock between truly simultaneous sessions.
   - [ ] Add offline tests for request-file mismatch, all duplicate states,
         explicit retry reasons, cooldowns, interrupted-request decisions,
-        routing consistency, and absence of credentials in saved files.
+        routing consistency, immutable pre-call classification, relabelling
+        that cannot bypass duplicate prevention, exact prompt retention, and
+        absence of credentials in saved files.
 - Related documents:
   - [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
   - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)

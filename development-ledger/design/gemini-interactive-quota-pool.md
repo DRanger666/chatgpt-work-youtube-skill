@@ -19,7 +19,7 @@ per-request round-robin rotation.
   rate-limited or unavailable.
 - Avoid draining both projects merely because two credentials exist.
 - Respect project-level cooldowns and server-provided retry information.
-- Search saved video outputs before every request and keep every network
+- Search the video material index before every request and keep every network
   attempt observable.
 - Never expose, log, save, or commit credential material.
 - Remain portable across fresh ChatGPT Work VMs.
@@ -42,7 +42,7 @@ fingerprints.
 
 ## Request routing
 
-1. Complete the saved-video-output search before selecting a credential.
+1. Complete the reusable-video-material search before selecting a credential.
 2. Select `primary` unless it is disabled or cooling down.
 3. Keep at most one Gemini video request in flight.
 4. On success, return the response and keep the selected bucket healthy.
@@ -69,7 +69,7 @@ fingerprints.
 - Process additional chunks sequentially.
 - Let project cooldown and failover happen between requests.
 - Never create parallel calls merely to consume both projects.
-- Synthesize from saved chunk outputs whenever possible.
+- Synthesize from saved chunk material whenever possible.
 
 ## State
 
@@ -101,7 +101,11 @@ database unless real cross-session evidence later justifies it.
 
 Keep request history in the per-video Gemini request log defined in
 [`youtube-saved-work.md`](youtube-saved-work.md). The log is separate from the
-video output index. A request entry preserves the router's safe attempt data:
+video material index. Before routing, the request entry already contains the
+exact prompt and its predeclared `contentClass`, `outputType`, and
+`outputFormat`. The router verifies those values against the pending request
+but never reclassifies them. A request entry preserves the router's safe
+attempt data:
 
 ```json
 {
