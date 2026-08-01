@@ -197,8 +197,11 @@ within its source range.
 
 If the index is missing, enumerate the video's saved-response files. Rebuild
 it from validated files and their Drive IDs, including explicit free-form
-review decisions. Initialize an empty index only after enumeration confirms
-there are no saved responses that can be admitted.
+review decisions. The rebuild-admissions JSON uses `admitted: true` plus
+covered time for accepted free-form material and only `admitted: false` for a
+reviewed response that remains unindexed. Failed structured responses remain
+saved but are skipped. Initialize an empty index directly only after
+enumeration confirms that no saved-response files exist.
 
 ## Gemini request log
 

@@ -458,10 +458,27 @@ class SavedGeminiResponseTests(SavedResponseFixture):
         cases.append((segment_order, "segment_order"))
         bad_flags = transcript_content(transcription_complete=True, truncation_detected=True)
         cases.append((bad_flags, "completion_flags"))
+        false_full_coverage = transcript_content(
+            transcription_complete=False, truncation_detected=True
+        )
+        cases.append((false_full_coverage, "completion_flags"))
         for generated, failure in cases:
             with self.subTest(failure=failure):
                 item = self.build_response(generated=generated)
                 self.assertEqual(item["saved"]["formatCheck"]["failure"], failure)
+
+    def test_transcript_checker_binds_segments_and_finish_reason_to_completion(self):
+        segment_after_completion = transcript_content(completed_ms=1_000)
+        item = self.build_response(generated=segment_after_completion)
+        self.assertEqual(
+            item["saved"]["formatCheck"]["failure"], "completion_range"
+        )
+
+        stopped_for_safety = self.build_response(finish_reason="SAFETY")
+        self.assertEqual(
+            stopped_for_safety["saved"]["formatCheck"]["failure"],
+            "completion_flags",
+        )
 
     def test_transcript_checker_accepts_full_video_minutes_above_99(self):
         item = self.build_response(
@@ -503,7 +520,7 @@ class SavedGeminiResponseTests(SavedResponseFixture):
             )
 
     def test_translation_requires_source_and_target_languages(self):
-        with self.assertRaisesRegex(saved.SavedResponseError, "targetLanguage"):
+        with self.assertRaisesRegex(request_log.RequestLogError, "targetLanguage"):
             self.build_response(
                 output_type="translation",
                 language_policy={"sourceLanguage": "hi"},
@@ -587,6 +604,19 @@ class MaterialIndexTests(SavedResponseFixture):
             index["materials"][1]["savedResponseId"],
         )
 
+    def test_material_index_time_cannot_move_backwards(self):
+        item = self.build_response()
+        index = saved.new_material_index(VIDEO_ID, updated_at=T2)
+        original = copy.deepcopy(index)
+        with self.assertRaisesRegex(saved.SavedResponseError, "move backwards"):
+            saved.add_to_material_index(
+                index,
+                item["path"],
+                "drive-response",
+                updated_at=T1,
+            )
+        self.assertEqual(index, original)
+
     def test_all_five_reusable_output_types_coexist_for_one_interval(self):
         index = saved.new_material_index(VIDEO_ID, updated_at=T0)
         for output_type in common.OUTPUT_FORMATS:
@@ -615,7 +645,7 @@ class MaterialIndexTests(SavedResponseFixture):
             )
         admissions = {
             summary["path"].name: {
-                "reviewed": True,
+                "admitted": True,
                 "coveredTimeRanges": [{"startMs": 0, "endMs": 600_000}],
             }
         }
@@ -629,6 +659,18 @@ class MaterialIndexTests(SavedResponseFixture):
         self.assertEqual(len(rebuilt["materials"]), 2)
         with self.assertRaisesRegex(saved.SavedResponseError, "initialize only"):
             saved.rebuild_material_index(VIDEO_ID, [], {})
+
+    def test_rebuild_skips_failed_transcript_and_rejected_free_form_response(self):
+        malformed = self.build_response(generated={"not": "a transcript"})
+        summary = self.build_response(output_type="summary")
+        rebuilt = saved.rebuild_material_index(
+            VIDEO_ID,
+            [malformed["path"], summary["path"]],
+            {},
+            {summary["path"].name: {"admitted": False}},
+            updated_at=T2,
+        )
+        self.assertEqual(rebuilt["materials"], [])
 
     def test_exact_and_containing_material_are_selected_without_file_reads(self):
         exact = self.build_response()
@@ -733,21 +775,55 @@ class MaterialIndexTests(SavedResponseFixture):
 
     def test_randomized_interval_planning_matches_interval_union(self):
         rng = random.Random(20260801)
-        for _ in range(5_500):
+        for case_number in range(5_500):
             requested_start = rng.randrange(0, 1_000)
             requested_end = rng.randrange(requested_start + 1, 1_200)
             requested = [{"startMs": requested_start, "endMs": requested_end}]
             coverage = []
-            for _ in range(rng.randrange(0, 7)):
+            materials = []
+            for material_number in range(rng.randrange(0, 7)):
                 start = rng.randrange(0, 1_200)
                 end = rng.randrange(start + 1, 1_300)
-                coverage.append({"startMs": start, "endMs": end})
+                interval = {"startMs": start, "endMs": end}
+                coverage.append(interval)
+                saved_response_id = common.sha256_hex(
+                    f"{case_number}:{material_number}".encode("utf-8")
+                )
+                materials.append(
+                    {
+                        "savedResponseId": saved_response_id,
+                        "driveFileId": f"drive-{case_number}-{material_number}",
+                        "fileName": saved.saved_response_filename(
+                            VIDEO_ID, "transcript", saved_response_id
+                        ),
+                        "fileSha256": "f" * 64,
+                        "outputType": "transcript",
+                        "outputFormat": common.OUTPUT_FORMATS["transcript"],
+                        "coveredTimeRanges": [interval],
+                        "timestampsRelativeTo": "full_video",
+                        "languagePolicy": {"sourceLanguage": "original"},
+                    }
+                )
+            index = {
+                "fileFormatVersion": 1,
+                "videoId": VIDEO_ID,
+                "materials": sorted(
+                    materials, key=lambda item: item["savedResponseId"]
+                ),
+                "updatedAt": T0,
+            }
+            plan = saved.find_material(index, self.query(requestedTimeRanges=requested))
             normalized = common.normalize_intervals(coverage)
             expected_missing = common.subtract_intervals(requested, normalized)
-            reconstructed = common.normalize_intervals(
-                common.intersect_intervals(normalized, requested) + expected_missing
+            expected_covered = common.intersect_intervals(normalized, requested)
+            self.assertEqual(plan["coveredTimeRanges"], expected_covered)
+            self.assertEqual(plan["missingTimeRanges"], expected_missing)
+            self.assertEqual(
+                common.normalize_intervals(
+                    plan["coveredTimeRanges"] + plan["missingTimeRanges"]
+                ),
+                requested,
             )
-            self.assertEqual(reconstructed, requested)
 
     def test_no_cache_v2_or_old_namespace_is_used(self):
         source = (ROOT / "scripts" / "saved_gemini_responses.py").read_text(

@@ -100,6 +100,11 @@ uses `gemini-transcript` version `1`; the other four use
 after ChatGPT reviews it and supplies conservative covered time within the
 requested source range.
 
+During rebuilding, the `--free-form-admissions` JSON records `admitted: true`
+with covered time for material accepted after review, or only
+`admitted: false` for a reviewed response that should remain unindexed. A
+failed structured response also remains saved but is skipped by rebuilding.
+
 ## Request exact wording from Gemini
 
 When captions are absent or inadequate and source wording matters, build the

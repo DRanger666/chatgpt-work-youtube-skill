@@ -169,6 +169,8 @@ def _checked_transcript_coverage(response, source_time_range):
         end = _parse_full_video_timestamp(segment["end_timestamp"])
         if not clip_start <= start < end <= clip_end:
             raise _TranscriptFormatError("segment_range")
+        if end > completed:
+            raise _TranscriptFormatError("completion_range")
         if previous_start is not None and start < previous_start:
             raise _TranscriptFormatError("segment_order")
         previous_start = start
@@ -189,11 +191,12 @@ def _checked_transcript_coverage(response, source_time_range):
     if not isinstance(complete, bool) or not isinstance(truncated, bool):
         raise _TranscriptFormatError("completion_flags")
     token_limited = finish_reason in {"MAX_TOKENS", "OUTPUT_TOKEN_LIMIT"}
+    normal_finish = finish_reason in {None, "STOP"}
     if complete:
-        if truncated or token_limited or completed != clip_end:
+        if truncated or not normal_finish or completed != clip_end:
             raise _TranscriptFormatError("completion_flags")
     else:
-        if completed == clip_end and not truncated and not token_limited:
+        if completed == clip_end:
             raise _TranscriptFormatError("completion_flags")
         if token_limited and not truncated:
             raise _TranscriptFormatError("completion_flags")
@@ -609,7 +612,12 @@ def add_to_material_index(
         return existing
     index["materials"].append(entry)
     index["materials"].sort(key=lambda item: item["savedResponseId"])
-    index["updatedAt"] = updated_at or common.utc_now()
+    next_updated_at = updated_at or common.utc_now()
+    if common.parse_timestamp(
+        next_updated_at, "new material-index updatedAt"
+    ) < common.parse_timestamp(index["updatedAt"], "previous material-index updatedAt"):
+        raise SavedResponseError("Material-index updatedAt cannot move backwards")
+    index["updatedAt"] = next_updated_at
     validate_material_index(index)
     original_index.clear()
     original_index.update(index)
@@ -635,11 +643,11 @@ def rebuild_material_index(
         saved_response = validate_saved_response_file(path)
         if saved_response["videoId"] != video_id:
             continue
-        drive_file_id = drive_file_ids.get(path.name)
-        if not drive_file_id:
-            raise SavedResponseError(f"Missing Drive file ID for {path.name}")
         kwargs = {}
-        if saved_response["outputFormat"]["name"] == "gemini-free-form-text":
+        if saved_response["outputFormat"]["name"] == "gemini-transcript":
+            if saved_response["formatCheck"]["status"] != "passed":
+                continue
+        else:
             admission = admissions.get(path.name)
             if not isinstance(admission, dict):
                 raise SavedResponseError(
@@ -647,15 +655,30 @@ def rebuild_material_index(
                 )
             common.require_exact_fields(
                 admission,
-                {"reviewed", "coveredTimeRanges"},
-                {"materialDescription"},
+                {"admitted"},
+                {"coveredTimeRanges", "materialDescription"},
                 "free-form admission",
             )
+            if not isinstance(admission["admitted"], bool):
+                raise SavedResponseError("Free-form admitted decision must be Boolean")
+            if admission["admitted"] is False:
+                if len(admission) != 1:
+                    raise SavedResponseError(
+                        "Rejected free-form response cannot claim indexed metadata"
+                    )
+                continue
+            if "coveredTimeRanges" not in admission:
+                raise SavedResponseError(
+                    "Admitted free-form response requires covered time"
+                )
             kwargs = {
-                "reviewed_free_form": admission["reviewed"],
+                "reviewed_free_form": True,
                 "covered_time_ranges": admission["coveredTimeRanges"],
                 "material_description": admission.get("materialDescription"),
             }
+        drive_file_id = drive_file_ids.get(path.name)
+        if not drive_file_id:
+            raise SavedResponseError(f"Missing Drive file ID for {path.name}")
         add_to_material_index(
             index,
             path,
@@ -663,8 +686,6 @@ def rebuild_material_index(
             updated_at=updated_at,
             **kwargs,
         )
-    if not index["materials"]:
-        raise SavedResponseError("No saved video-material response matched this video")
     index["updatedAt"] = updated_at or common.utc_now()
     validate_material_index(index)
     return index
