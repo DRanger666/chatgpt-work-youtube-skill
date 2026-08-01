@@ -809,7 +809,7 @@ def verify_pending_run(
     return request, run
 
 
-def _reconcile_attempt_prefix(run, router_result):
+def _verified_attempt_history(run, router_result):
     stored = run["routingAttempts"]
     returned = router_result["attempts"]
     if len(stored) > len(returned) or stored != returned[: len(stored)]:
@@ -827,7 +827,7 @@ def _verify_result_binding(request, run, result):
         or result["exactRequestSha256"] != run["exactRequestSha256"]
     ):
         raise RequestLogError("Safe router result does not belong to this request run")
-    _reconcile_attempt_prefix(run, result)
+    _verified_attempt_history(run, result)
     return result
 
 
@@ -895,7 +895,7 @@ def finish_run(
     if router_result is None:
         raise RequestLogError("finish-run requires a safe router result")
     result = _verify_result_binding(request, run, router_result)
-    attempts = _reconcile_attempt_prefix(run, result)
+    attempts = _verified_attempt_history(run, result)
 
     if result["status"] == "failed":
         if (

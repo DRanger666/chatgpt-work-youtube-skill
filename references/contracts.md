@@ -4,11 +4,13 @@
 
 - [Local installation](#local-installation)
 - [Google Drive](#google-drive)
-- [Gemini clipped request](#gemini-clipped-request)
-- [Interactive Gemini quota pool](#interactive-gemini-quota-pool)
-- [Artifact cache v3](#artifact-cache-v3)
+- [Gemini requests](#gemini-requests)
+- [Reusable output formats](#reusable-output-formats)
+- [Saved Gemini responses](#saved-gemini-responses)
+- [Video material index](#video-material-index)
+- [Gemini request log](#gemini-request-log)
+- [Interruption decisions](#interruption-decisions)
 - [Validated behavior](#validated-behavior)
-- [Primary documentation](#primary-documentation)
 
 ## Local installation
 
@@ -44,251 +46,236 @@ Credential location:
 - File: `youtube-workbench-secrets.env`
 - File ID: `1rvfVswFWzIoqMOKsJttZgTsRkpbiKxNx`
 
-Native research artifact cache:
+Retrieve credentials without displaying their bytes. Materialize them at
+`$install/config/youtube-workbench-secrets.env` with mode `0600`. The accepted
+variables are `GEMINI_API_KEY` and `GEMINI_API_KEY_FALLBACK`. The fallback must
+belong to a distinct project to provide distinct quota.
 
-- Folder: `YouTubeArtifactCacheV3`
-- Manifest name: `<videoId>--manifest.json`
-- Artifact name: `<videoId>--<kind>--<artifactId>.json`
-- Gemini execution journal name: `<videoId>--gemini-executions.json`
+Saved YouTube work uses one private folder named `YouTubeVideoWork`. Locate it
+by exact name and require one unambiguous result. Once created, retain and
+verify its stable Drive ID. Its three filename forms are:
 
-The v3 folder has no stable ID until its first controlled creation. Locate it
-by exact name and require one unambiguous private folder. Record and verify its
-stable ID after creation. Do not search `YouTubeResearchCache` or any cache-v2
-record when a v3 manifest is absent.
+```text
+<videoId>--video-material-index.json
+<videoId>--gemini-response--<outputType>--<savedResponseId>.json
+<videoId>--gemini-requests.json
+```
 
-Prefer stable IDs after they are established. Fall back to exact-name search
-when an ID no longer resolves, and verify the parent folder before use.
+The implementation is clean-slate. It does not search, validate, import,
+migrate, or fall back to cache-v2 files. Existing cache-v2 data remains
+untouched during implementation and initial validation; any later cleanup is
+a separate deliberate operation.
 
-Retrieve credentials in code mode so the connector result is not surfaced. Compare bytes or hashes without printing content. Materialize locally with mode `0600`.
+Never store credentials, authorization headers, credential fragments,
+credential fingerprints, or unrelated personal information in these files.
 
-Credential variables:
-
-- `GEMINI_API_KEY`: primary Gemini project credential.
-- `GEMINI_API_KEY_FALLBACK`: optional credential from a different Google Cloud
-  project.
-
-Gemini quota is project-level. Multiple keys from the same project must not be
-treated as separate quota buckets.
-
-## Gemini clipped request
+## Gemini requests
 
 Use the Generate Content endpoint:
 
 `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent`
 
-Send requests through `scripts/gemini_request.py`. It authenticates with the
-selected credential using the `x-goog-api-key` header without writing the
-credential to routing state or cache.
+Build timestamp-clipped requests with
+`scripts/build_gemini_chunk_request.py`. The video part contains the canonical
+YouTube URL and `videoMetadata.startOffset`/`endOffset` strings in seconds. The
+prompt follows the video part.
 
-Use this input structure:
+When exact wording is needed, pass `--transcript-only`. The builder fixes the
+tested prompt, JSON response schema, and 8192-token allowance. Transcript
+timestamps use `MM:SS.mmm`, where minutes have at least two digits and can
+exceed 99. For long transcripts, prefer approximately 600-second clips with a
+four-second overlap.
 
-```json
-{
-  "contents": [{
-    "role": "user",
-    "parts": [
-      {
-        "fileData": {
-          "fileUri": "https://www.youtube.com/watch?v=VIDEO_ID",
-          "mimeType": "video/*"
-        },
-        "videoMetadata": {
-          "startOffset": "0s",
-          "endOffset": "1800s"
-        }
-      },
-      {
-        "text": "Analyze only this supplied interval and use full-video timestamps."
-      }
-    ]
-  }],
-  "generationConfig": {
-    "responseMimeType": "application/json",
-    "maxOutputTokens": 2048
-  }
-}
+Send only a request that has already been recorded as the highest pending run:
+
+```sh
+python3 scripts/gemini_request.py \
+  --request REQUEST.json \
+  --response RESPONSE.json \
+  --router-result ROUTER_RESULT.json \
+  --request-log VIDEO_REQUEST_LOG.json \
+  --request-id REQUEST_ID \
+  --run-number RUN_NUMBER \
+  --state GEMINI_POOL_STATE.json
 ```
 
-Google documents `startOffset` and `endOffset` as seconds ending in `s`. Keep the prompt after the video part.
+The router verifies the request file, video URI, clip, prompt, endpoint, model,
+method, request ID, run number, normalized request hash, exact request-file
+hash, and highest-pending state before loading a credential.
 
-### Transcript-only request
+The pool contains at most two aliases: `primary` and `fallback`. Keep one
+request in flight. Retry transient `408` and selected `5xx` responses with
+bounded delay. Cool down a project after `429`; disable an invalid credential
+for the run; do not rotate on a terminal request error. If every bucket is
+unavailable, return the failure and earliest cooldown instead of looping.
 
-Pass `--transcript-only` to `scripts/build_gemini_chunk_request.py` when the
-workflow needs Gemini to transcribe rather than analyze a supplied interval.
-The builder uses the prompt and strict JSON schema validated in the July 2026
-captionless-video trials and defaults to `8192` output tokens.
-Timestamp minutes contain at least two digits and may exceed `99`, so clips
-after 7,200 seconds can retain full-video `MM:SS.mmm` timestamps.
+Every retained router attempt has a sequential `attemptNumber`, bucket alias,
+start and finish times, HTTP status, classification, and applicable safe
+cooldown or backoff data. A successful router result also contains
+`responseSha256`, calculated from the exact response-file bytes.
 
-For long transcripts, use the existing planner with
-`--chunk-seconds 600 --overlap-seconds 4`. Keep the generated full-video
-timestamps when reconciling the overlap.
+## Reusable output formats
 
-Treat a transcript response as incomplete when `transcription_complete` is
-false, `truncation_detected` is true, `completed_through_timestamp` does not
-cover the requested interval, or the API finish reason reports output
-truncation. Finish and retain its normal cache record, but do not treat that
-record as complete coverage. Request the unfinished interval in smaller clips;
-the changed clip bounds produce new fingerprints. Do not repeat or reopen the
-identical request for truncation recovery.
+Only `video_material` can be saved and searched later. Its initial registry is
+deliberately asymmetric:
 
-## Interactive Gemini quota pool
+| `outputType` | `outputFormat` | Validation |
+| --- | --- | --- |
+| `transcript` | `gemini-transcript` version `1` | Deterministic structured check |
+| `translation` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
+| `summary` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
+| `systematic_visual_description` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
+| `systematic_onscreen_text` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 
-The pool contains at most two aliases:
+Reject any other type, format, or type-format pairing. Translation requires
+both source and target languages. Transcript uses original-language content
+and `timestampsRelativeTo: "full_video"`.
 
-- `primary` from `GEMINI_API_KEY`;
-- `fallback` from `GEMINI_API_KEY_FALLBACK`.
+`task_specific_observation` and `direct_answer` are one-time content classes.
+Their response text is returned to the current conversation and is not written
+to Drive. Their successful run is still verified and recorded.
 
-Keep at most one request in flight. Prefer `primary`; use `fallback` only when
-the primary bucket is cooling down or unavailable. On `429
-RESOURCE_EXHAUSTED`, respect a server-provided retry delay when present, add
-jitter, and cool down the entire project bucket. Bound transient retries. Do
-not rotate on `400 INVALID_ARGUMENT`.
+## Saved Gemini responses
 
-Store session-local health at:
+Use `scripts/saved_gemini_responses.py save-response` after a successful
+`video_material` router result. One immutable JSON file records one response
+from one numbered run. Its format version is `1` and it contains:
 
-`$install/workspace/gemini-keypool-state.json`
+- normalized `videoId`;
+- `savedResponseId`, `requestId`, `runNumber`, and `exactRequestSha256`;
+- fixed `contentClass`, controlled `outputType`, and compatible `outputFormat`;
+- exact requested `sourceTimeRange` and applicable timestamp/language policy;
+- the complete safe `routerResult`;
+- `responseSha256` and the exact UTF-8 Gemini response file text in
+  `responseJsonText`;
+- for transcript format only, a mechanically derived `formatCheck` and, when
+  valid, `coveredTimeRanges`.
 
-The state may contain bucket aliases, cooldown times, disabled flags, and
-failure classifications. It must not contain credential values or
-fingerprints.
+The saver independently hashes the exact response bytes and requires equality
+with the router result. `savedResponseId` is derived from every immutable saved
+field except the repeated response text; `responseSha256` already binds those
+bytes. A different authorized run therefore receives a different saved
+response ID even when Gemini returns identical text.
 
-## Artifact cache v3
+The transcript checker requires the exact response fields and segment fields,
+valid full-video timestamps, the requested clip bounds, ordered in-range
+segments, consistent completion flags, and a compatible API finish reason. It
+derives covered time from the clip start through
+`completed_through_timestamp`. A malformed response is still saved but has a
+failed check and no covered time, so it cannot enter the material index.
 
-Use `scripts/artifact_cache_v3.py` for reusable material and
-`scripts/gemini_execution_journal_v3.py` for Gemini lifecycle. Native
-artifacts, manifests, and execution journals each start at schema version `1`;
-the numeral `3` identifies the cache-system generation. Production v3 code
-does not import, search, validate, migrate, or fall back to cache v2.
+An incomplete or truncated transcript is saved normally and contributes only
+its checked partial coverage. Request the remaining interval with smaller clip
+bounds, which creates a distinct request; never rerun the identical request as
+truncation handling.
 
-Represent coverage as normalized half-open integer-millisecond intervals:
+## Video material index
 
-```json
-{"startMs": 0, "endMs": 600000}
-```
+The material index is a small search file with only:
 
-Match transcript-like artifacts mechanically by exact artifact kind, contract
-name and version, timestamp basis, and structured language policy. Native
-artifacts use the `full_video` timestamp basis and expose only verified
-`validCoverage`. Compute current gaps from requested coverage minus the union
-of compatible valid coverage. Keep requested execution coverage and produced
-artifact references in the execution journal; do not persist truncation events
-or derived request gaps in artifact-search records.
+- `fileFormatVersion`, normalized `videoId`, `updatedAt`;
+- a sorted `materials` list.
 
-The mutable `<videoId>--manifest.json` contains:
+Each material entry contains its `savedResponseId`, Drive file ID, predictable
+filename, exact stored-file SHA-256, output type and format, and covered time
+ranges. Applicable timestamp/language policy and a concise reviewed material
+description can also appear. Request IDs, run numbers, prompts, router
+attempts, retry reasons, cooldowns, and request status do not belong here.
 
-- `schemaVersion`, `cacheSystem`, `videoId`, and `updatedAt`;
-- artifact entries with artifact and Drive file IDs, deterministic filename,
-  kind, contract, timestamp basis, language policy, valid coverage, and exact
-  stored-byte SHA-256 integrity;
-- a human-readable `taskDescription` only when an analysis artifact requires
-  explicit agent review.
+Search the readable index fields before downloading response files. Match
+output type, format, language, timestamp policy, and half-open millisecond
+coverage. The planner supports exact, containing, combined, overlapping,
+partial, incompatible, and missing coverage. It returns only selected saved
+response IDs and remaining ranges. Download and verify only selected files;
+replan around missing, stale, or invalid selections before constructing a
+request.
 
-The manifest contains no execution IDs, fingerprints, provenance, lifecycle,
-attempts, routing, retry reasons, leases, cooldowns, requested execution
-coverage, stored request gaps, or truncation events. Modify it only when the
-searchable artifact set or content-side index metadata changes.
+Every distinct saved response ID is retained even when its type and interval
+match another entry. Transcript coverage comes only from the checker.
+Free-form material requires explicit ChatGPT review and conservative coverage
+within its source range.
 
-Each immutable artifact contains reusable generated content and the
-compatibility metadata required to interpret and validate it. Derive
-`artifactId` from that canonical reusable record without execution provenance.
-The same reusable material therefore retains the same identity when a
-different execution produces or verifies it. Never replace an existing
-artifact file; upload a new artifact before adding its entry to the manifest.
+If the index is missing, enumerate the video's saved-response files. Rebuild
+it from validated files and their Drive IDs, including explicit free-form
+review decisions. Initialize an empty index only after enumeration confirms
+there are no saved responses that can be admitted.
 
-Plan from manifest metadata before downloading artifact content. Download and
-integrity-check only selected reuse or analysis-review candidates. Replan
-around missing, stale, or invalid selected files before constructing any new
-Gemini request.
+## Gemini request log
 
-If a manifest is missing, enumerate native artifacts for that video first.
-Reconstruct the manifest from verified artifact files and Drive file IDs when
-any exist. Initialize an empty manifest only after enumeration confirms that no
-native artifacts exist. Manifest recovery never reads, rewrites, erases, or
-resets the execution journal.
+Use `scripts/gemini_request_log.py`. The per-video file has format version `1`,
+the normalized video ID, `updatedAt`, and a `requests` list.
 
-### Gemini execution journal
+One request entry keeps immutable logical-request information: request ID,
+video and requested range, content class, exact prompt, endpoint, model,
+method, normalized request hash, and applicable reusable-output declarations.
+It owns an ordered `runs` list. Request status is not separately writable.
 
-The deterministic `<videoId>--gemini-executions.json` journal owns:
+Every run contains:
 
-- normalized video identity and canonical execution fingerprints;
-- route, model, and requested coverage;
-- pending, completed, failed, and reconciled abandonment history;
-- session-specific writer ownership and lease expiry;
-- every safe network attempt present in retained `ROUTING_JSON`;
-- selected bucket, retry delay, backoff, cooldown, failure classification, and
-  earliest available cooldown when present;
-- documented authorization for each identical failed or abandoned retry;
-- reconciliation, handoff, and abandonment evidence; and
-- one-way references from completed executions to produced artifact IDs.
+- monotonically increasing `runNumber` and exact request-file hash;
+- start/end times and one of `pending`, `succeeded`, `failed`, or
+  `interrupted`;
+- its own complete ordered routing attempts and applicable cooldown;
+- for runs above 1, the authorization reason and its authorization/use times;
+- on reusable success, saved-response ID, Drive file ID, and file hash;
+- on one-time success, the generated `responseNotSavedByPolicy: true` marker.
 
-Artifacts and manifests never point back to executions. Rebuilding a manifest
-does not change execution history or attempt numbering.
+Previous terminal runs are never removed or overwritten. At most one run for a
+video is pending. An identical pending request blocks another call. Any later
+run requires a non-empty authorization reason, must wait for recorded
+cooldowns, and cannot repeat an unchanged terminal request failure.
 
-Before credential selection, acquire the supported per-video writer, reread
-the latest manifest, and repeat artifact planning and selected-file
-verification. Build the request only for still-uncovered work, start its
-execution, save the pending journal to Drive, and only then invoke
-`gemini_request.py`. Finalize both successes and failures with the exact safe
-routing metadata. Preserve primary, fallback, and bounded transient attempts
-as separate entries. A failure caused by no healthy bucket may contain zero
-network attempts but must retain its earliest cooldown.
+`finish-run` accepts only a result bound to the exact request and highest
+pending run. Existing retained attempts must be an exact prefix of returned
+attempts; only the missing suffix is copied. Conflicts, gaps, duplicates,
+reordering, or a non-final terminal attempt stop the update. Completion time
+comes from the terminal router result, not from a later file update.
 
-If the router invocation ends before `ROUTING_JSON` is retained, the journal
-remains pending with an unknown network outcome and no inferred attempt. Never
-invent the missing history or infer an outcome; stop for the user's
-interrupted-run decision before another Gemini call.
+For reusable success, save and upload the response before finishing the run;
+then add eligible content to the material index. For one-time success,
+`finish-run` verifies the actual response-file hash before generating the
+non-storage marker. Caller-supplied status, attempts, time, or marker are not
+success evidence.
 
-An identical pending or completed execution blocks submission. An identical
-failed or abandoned execution requires a non-empty recorded retry reason.
-Never retry `INVALID_ARGUMENT` or another terminal request failure unchanged.
+## Interruption decisions
 
-### Single-writer operating contract
+Do not intentionally use two write-capable sessions for the same normalized
+video ID. This is an operating rule, not a Drive lock or an exactly-once
+guarantee.
 
-The initial release supports one write-capable Work session per normalized
-YouTube video ID. Writing includes Gemini submission, journal mutation,
-artifact publication, and manifest creation, replacement, repair, or removal.
-Concurrent sessions may inspect and reuse the same video's artifacts read-only.
-Different normalized video IDs may have independent writers.
+If a run remains pending after the active workflow loses the terminal router
+result, its network outcome is unknown. Do not invent attempts, infer an
+outcome, or automatically retry. Ask the user to confirm that the earlier
+session has stopped.
 
-An active different owner blocks the same video's write path. Lease expiry
-triggers reconciliation; it does not grant ownership or prove the old writer
-stopped. When termination is uncertain, require human confirmation before
-recording reconciliation, handoff, or abandonment and proceeding.
+If reusable response saving reached Drive but the final request-log update did
+not, enumerate all saved responses for that video. Exactly one response with
+the pending request ID, run number, and exact request hash can finish the
+existing run after byte, identity, and router-result validation. Restore its
+retained attempts and original terminal time. No new Gemini call occurs.
 
-Drive replacement supplies no atomic compare-and-set. Do not claim
-Drive-enforced mutual exclusion, safe concurrent same-video writes,
-cross-session at-most-once execution, or exactly-once execution. This is a
-supported-use constraint. A future atomic coordinator may replace it without
-changing artifact identity or manifest search fields.
-
-Never store:
-
-- API keys
-- authorization headers
-- raw credential files
-- credential fragments or fingerprints
-- unrelated personal information
+No match leaves the result uncertain. Multiple claimants or any conflict stops
+for investigation. A confirmed stopped run can instead be marked
+`interrupted`; a later deliberate execution is a new numbered run with explicit
+authorization.
 
 ## Validated behavior
 
-- Transcript MCP works on captioned Bengali videos and returns timestamp-linked citations.
-- A public captionless 2h15m Hindi movie failed as a single whole-video Gemini request.
-- The same movie succeeded when clipped to `0s`–`1800s`.
-- Native v3 coverage tests handle exact, containing, composite, overlapping,
-  partial-valid, incompatible, stale, and missing material without v2 fixtures.
-- Manifest-first planning downloads only selected artifacts and replans around
-  verification failures.
-- Native journals preserve router attempts, retry authorization, pending
-  recovery, handoff, abandonment, and one-way artifact references independently
-  of manifest recovery.
-- Canonical execution guards prevent duplicate pending and completed calls,
-  require reasons for failed retries, and reject unchanged terminal failures.
-- Existing offline Gemini-router tests cover primary success, project cooldown,
-  fallback, bounded transient retry, terminal request errors, and credential
-  failure.
+- Caption retrieval returns timestamp-linked citations for supported videos.
+- Captionless and long-video requests can be clipped to bounded intervals.
+- Transcript timestamps work beyond 99 minutes.
+- Transcript validation rejects malformed structure, clip mismatches,
+  inconsistent completion flags, bad segment order, and false coverage.
+- Material search covers exact, containing, combined, overlapping, partial,
+  incompatible, stale, and missing cases, including 5,500 randomized interval
+  cases.
+- Request history preserves separate authorized runs, all returned safe
+  attempts, cooldowns, failures, and distinct saved-response references.
+- Request/router/response byte mismatches and invalid one-time completion are
+  rejected before persistent state changes.
+- No production module imports or calls a cache-v2 implementation.
 
-## Primary documentation
+Primary external documentation:
 
 - Gemini video understanding: `https://ai.google.dev/gemini-api/docs/generate-content/video-understanding`
 - Gemini Generate Content API: `https://ai.google.dev/api/generate-content`

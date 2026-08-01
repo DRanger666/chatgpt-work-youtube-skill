@@ -1,8 +1,8 @@
 interface:
   display_name: Work with YouTube
   short_description: Analyze YouTube videos reproducibly
-  default_prompt: Use $work-with-youtube to analyze this YouTube video with artifact-first
-    research.
+  default_prompt: Use $work-with-youtube to analyze this YouTube video with captions
+    and saved material before requesting new Gemini work.
 policy:
   products:
   - chatgpt

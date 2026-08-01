@@ -26,7 +26,7 @@ Do not use vague subjects such as `update`, `fix`, or `changes`.
 - Load the GitHub PAT from private credential storage only for the active
   network operation.
 - Never place a PAT in a remote URL, repository configuration, commit,
-  generated artifact, terminal log, or documentation.
+  generated file, terminal log, or documentation.
 
 ## Before committing
 

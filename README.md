@@ -46,14 +46,14 @@ When exact source wording is needed, the request builder also has an explicit
 transcript-only mode that prevents a broad audiovisual-analysis response.
 
 Long videos are analyzed in timestamp-bounded chunks. Before constructing a
-Gemini request, the skill searches a per-video manifest for compatible,
-integrity-verified artifacts and composes their interval coverage. Only
-uncovered intervals are generated. Canonical execution fingerprints remain
-last-moment duplicate-call guards and provenance rather than discovery keys.
+Gemini request, the skill searches a per-video material index for compatible
+saved responses and verifies only the selected files. Only uncovered intervals
+are generated.
 
-Native cache-v3 manifests and immutable artifacts live separately in the
-no-space `YouTubeArtifactCacheV3` Drive namespace. This clean-slate system does
-not import, migrate, or fall back to cache-v2 records.
+Saved responses, material indexes, and Gemini request logs live in the
+no-space `YouTubeVideoWork` Drive folder. The request log prevents blind
+repetition without being used as a material-discovery key. This clean-slate
+system does not import, migrate, or fall back to cache-v2 records.
 
 For interactive continuity, the skill can use a second credential belonging to
 a different Google Cloud project. It remains primary-first and sequential:
@@ -113,17 +113,18 @@ Translate and explain what is happening in this captionless video.
 - `scripts/ensure_youtube_mcp.sh` — restore and verify the pinned portable MCP.
 - `scripts/call_youtube_mcp.mjs` — make deterministic MCP calls.
 - `scripts/build_gemini_chunk_request.py` — build timestamp-clipped requests.
-- `scripts/artifact_cache_v3.py` — search compatible artifacts, plan missing
-  coverage, maintain search-only per-video manifests, and verify selected
-  immutable content.
-- `scripts/gemini_execution_journal_v3.py` — preserve native Gemini execution
-  lifecycle, router attempts, retry authorization, recovery, and per-video
-  writer state independently of artifact discovery.
-- `scripts/gemini_cache.py` — retained cache-v2 implementation; native v3 does
-  not import or call it.
+- `scripts/saved_gemini_responses.py` — save immutable reusable responses,
+  maintain per-video material indexes, verify selected files, and plan missing
+  coverage.
+- `scripts/gemini_request_log.py` — preserve logical requests, separate
+  authorized runs, router attempts, cooldowns, interruptions, and result
+  references without overwriting history.
+- `scripts/youtube_work_common.py` — shared file, identity, interval, format,
+  and YouTube URL validation.
 - `scripts/gemini_request.py` — route requests through healthy project
-  credentials with bounded retries and cooldowns.
-- `references/contracts.md` — version, credential, API, and cache contracts.
+  credentials with bounded retries after verifying the highest pending run.
+- `references/contracts.md` — version, credential, API, saved-response,
+  material-index, and request-log contracts.
 - `development-ledger/` — ongoing investigations, design notes, debugging
   records, and evidence-backed backlog items.
 - `CONTRIBUTING.md` — repository and commit-history conventions.

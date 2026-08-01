@@ -1,3 +1,4 @@
+import argparse
 import copy
 import json
 import random
@@ -756,6 +757,44 @@ class MaterialIndexTests(SavedResponseFixture):
         self.assertNotIn("YouTubeResearchCache", source)
         self.assertNotIn("YouTubeArtifactCacheV3", source)
         self.assertEqual(common.DRIVE_FOLDER, "YouTubeVideoWork")
+
+
+class CommandSurfaceTests(unittest.TestCase):
+    def subcommands(self, parser):
+        action = next(
+            item
+            for item in parser._actions
+            if isinstance(item, argparse._SubParsersAction)
+        )
+        return set(action.choices)
+
+    def test_request_log_exposes_only_run_oriented_commands(self):
+        self.assertEqual(
+            self.subcommands(request_log.build_parser()),
+            {
+                "locate",
+                "init-log",
+                "start-run",
+                "verify-run",
+                "finish-run",
+                "mark-run-interrupted",
+            },
+        )
+
+    def test_saved_response_tool_exposes_concrete_file_operations(self):
+        self.assertEqual(
+            self.subcommands(saved.build_parser()),
+            {
+                "locate",
+                "save-response",
+                "init-material-index",
+                "add-to-material-index",
+                "rebuild-material-index",
+                "find-material",
+                "verify-selected",
+                "plan-missing-ranges",
+            },
+        )
 
 
 if __name__ == "__main__":
