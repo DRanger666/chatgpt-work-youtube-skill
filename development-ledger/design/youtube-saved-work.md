@@ -22,16 +22,19 @@
 ## Status
 
 This document replaces the earlier cache-v3 and single-writer designs. The
-feature branch remains blocked from merge and must not create live saved-work
-files until the worker implements and validates this reduced design.
+reduced design is implemented on `feat/artifact-cache-v3` through `e92ce42`
+and validated offline. The branch remains unmerged, the installed skill is
+unchanged, and no live Drive files or Gemini requests were created during
+implementation.
 
 The audited code at `b8598e4` and the design correction at `f65a965` remain
 useful development history. They are not the implementation specification.
 
-This commit changes the governing documents only. The old scripts and the
-operational instructions that describe them remain temporarily visible so the
-worker can replace and test them together. Do not run this feature branch as a
-live saved-work system until that replacement is complete.
+The replacement uses the required scripts, commands, filenames, JSON fields,
+and plain operational vocabulary without compatibility wrappers. Seventy-one
+offline tests pass under four Python hash seeds, including 5,500 actual
+material-planner interval cases per run. A representative live validation and
+any later cache-v2 cleanup remain separately authorized work.
 
 ## Purpose
 
