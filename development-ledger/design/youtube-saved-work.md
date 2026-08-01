@@ -509,6 +509,33 @@ solely by a fixed output-format registry in the implementation:
 - Adding another structured format requires adding its checker and offline
   tests before live use. A caller cannot supply, omit, or choose the checker.
 
+The initial registry is deliberately asymmetric. Timestamped transcript
+generation has already shown that it needs a machine-checked structure and
+mechanically derived covered time. No comparable structural need has been
+observed for the other four reusable output types, so they share one minimal
+free-form format:
+
+| `outputType` | Required `outputFormat` | Kind |
+|---|---|---|
+| `transcript` | `gemini-transcript` version `1` | Structured |
+| `translation` | `gemini-free-form-text` version `1` | Free-form |
+| `summary` | `gemini-free-form-text` version `1` | Free-form |
+| `systematic_visual_description` | `gemini-free-form-text` version `1` | Free-form |
+| `systematic_onscreen_text` | `gemini-free-form-text` version `1` | Free-form |
+
+`gemini-free-form-text` version `1` means that Gemini's generated content is
+ordinary text without a promised machine-readable response structure. It has
+no deterministic checker, and its saved response must not contain
+`formatCheck`. ChatGPT reads it once before material-index admission and
+records only conservative covered-time metadata inside the declared source
+range. The controlled output type and the existing language, timestamp, and
+covered-time index fields retain the meaning needed for later search.
+
+Reject an unregistered format name or version and any type-format combination
+not listed above. Do not add a dedicated structured format for translation,
+summary, systematic visual description, or systematic onscreen text until an
+observed need defines the structure, checker, search effect, and offline tests.
+
 A format check validates only the declared structure and internal consistency:
 required fields and types, timestamp syntax and ordering, requested clip
 bounds, and completion flags where applicable. It does not judge factual
@@ -799,6 +826,9 @@ approved.
 - the controlled output-type list rejects arbitrary categories;
 - `video_material` requires controlled `outputType` and compatible
   `outputFormat`, while both fields are absent for the one-time classes;
+- the format registry accepts `gemini-transcript` version `1` only for
+  `transcript`, accepts `gemini-free-form-text` version `1` only for the other
+  four initial reusable output types, and rejects every other pairing;
 - reusable saved filenames contain their verified controlled output type;
 - identical response text from different source time ranges receives distinct
   saved-response identities;

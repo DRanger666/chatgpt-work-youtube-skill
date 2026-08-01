@@ -92,6 +92,10 @@ three reopened items below are governed by
   - [ ] Accept only `transcript`, `translation`, `summary`,
         `systematic_visual_description`, and `systematic_onscreen_text` as
         initial reusable output types. Reject arbitrary categories.
+  - [ ] Enforce the deliberately asymmetric initial format registry:
+        `transcript` uses structured `gemini-transcript` version `1`; the other
+        four reusable output types use minimal `gemini-free-form-text` version
+        `1`. Reject unregistered formats and incompatible type-format pairs.
   - [ ] Search explicit index fields in that order: controlled output type,
         output-format version, language, timestamp policy, and covered time.
         Use `savedResponseId` only after selection to retrieve and verify the
@@ -154,6 +158,10 @@ three reopened items below are governed by
   - [ ] Run a deterministic format checker exactly when the declared output
         format requires it. A free-form format must not receive a fabricated
         check status.
+  - [ ] Treat `gemini-free-form-text` version `1` as ordinary generated text
+        without a machine-readable response contract. Add no dedicated
+        structured format for a reusable output type until observed need
+        defines its checker, search effect, and offline tests.
   - [ ] Add only `video_material` to the index. A malformed transcript must
         contribute no covered time even though its response remains saved.
   - [ ] Identify index entries only by `savedResponseId`. Append every new ID
