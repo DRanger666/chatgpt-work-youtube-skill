@@ -188,8 +188,8 @@ three reopened items below are governed by
   that the interactive workflow does not justify.
 - Goal: Keep a plain per-video Gemini request log. Verify that the exact request
   file recorded for a pending run is the one sent, preserve every authorized
-  run and its routing attempts, and stop for the user's decision when an
-  earlier run has an uncertain outcome.
+  run and every safe routing attempt returned to the active workflow, and stop
+  for the user's decision when an earlier run has an uncertain outcome.
 - Evidence:
   - Commit `763d4cf` stopped consuming `ROUTING_JSON` and removed documented
     retry authorization and attempt preservation.
@@ -243,8 +243,11 @@ three reopened items below are governed by
         request log, routing metadata, and local bucket-state file; update the
         operational documents and tests in the same implementation commit.
   - [ ] Persist every safe primary, fallback, transient, failed, and successful
-        routing attempt inside the run that made it. Bind routing output to
-        both request ID and run number.
+        routing attempt returned to the active workflow inside the run that
+        made it. Bind routing output to both request ID and run number. If an
+        invocation ends before a terminal safe router result is retained,
+        leave the run pending with an unknown network outcome; never fabricate
+        missing attempts or infer success or failure.
   - [ ] Keep bounded router retries and credential failover inside one run.
         Every later deliberate execution must append another run with one new,
         consumed user authorization; never overwrite an earlier run.
@@ -265,8 +268,8 @@ three reopened items below are governed by
   - [ ] When a later session finds one exact verified saved response for a
         pending run, require user confirmation that the earlier session has
         stopped and finish that existing run without another Gemini call. Use
-        the retained router result to restore every attempt and its terminal
-        attempt time for `endedAt`.
+        the retained router result to restore every attempt contained in that
+        result and its terminal attempt time for `endedAt`.
   - [ ] Number router attempts from `1` without gaps and require each successful
         router result to contain the run's complete ordered attempt history.
         Existing pending-run attempts must match an exact prefix; append only
@@ -295,7 +298,8 @@ three reopened items below are governed by
         reusable response references, saved-response back-links,
         interrupted-write completion without a new network call, response-byte
         hash mismatch, attempt-prefix reconciliation, unlinked and conflicting
-        response rejection, append-only terminal history, derived current
+        response rejection, router interruption with an unknown network outcome
+        and no invented attempt, append-only terminal history, derived current
         status, and absence of credentials in saved files.
 - Related documents:
   - [`design/youtube-saved-work.md`](design/youtube-saved-work.md)

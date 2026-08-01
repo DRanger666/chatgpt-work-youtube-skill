@@ -19,8 +19,8 @@ per-request round-robin rotation.
   rate-limited or unavailable.
 - Avoid draining both projects merely because two credentials exist.
 - Respect project-level cooldowns and server-provided retry information.
-- Search the video material index before every request and keep every network
-  attempt observable.
+- Search the video material index before every request and preserve every safe
+  routing attempt returned to the active workflow.
 - Never expose, log, save, or commit credential material.
 - Remain portable across fresh ChatGPT Work VMs.
 
@@ -59,8 +59,9 @@ fingerprints.
 7. On a credential-specific authentication or permission failure, disable that
    bucket for the run and try the other bucket once.
 8. On `400 INVALID_ARGUMENT` or another request error, stop without rotation.
-9. When no bucket is healthy, save the failed attempt history and report the
-   earliest cooldown time instead of busy-looping.
+9. When the router reports that no bucket is healthy, save the routing attempts
+   returned in that result and report the earliest cooldown time instead of
+   busy-looping.
 
 ## Long videos
 
@@ -174,10 +175,10 @@ reusable material shows the nesting:
 ```
 
 An identical failed request runs again only by appending a new run with a
-documented authorization. Preserve every earlier run and its attempts. Do not
-persist a separate request-level status, authorization, cooldown, or response
-summary. Never include a key, authorization header, key fragment, or key
-fingerprint.
+documented authorization. Preserve every earlier run and its recorded
+attempts. Do not persist a separate request-level status, authorization,
+cooldown, or response summary. Never include a key, authorization header, key
+fragment, or key fingerprint.
 
 On `video_material` success, bind the router result to the request ID, run
 number, exact request hash, and exact response-file bytes. `gemini_request.py`
@@ -187,14 +188,22 @@ rehashes the same file and requires equality before writing the run binding,
 response text, and complete safe router result into the saved response. If the
 final log update is interrupted, a later session verifies the exact run-linked
 response, obtains confirmation that the earlier session has stopped, restores
-every routing attempt and the original terminal attempt time, and finishes the
-same run without routing another Gemini call.
+every routing attempt contained in that response's retained router result and
+the original terminal attempt time, and finishes the same run without routing
+another Gemini call.
 
-Number routing attempts from `1` without gaps inside each run. A terminal
-router result contains the complete ordered attempt list. Attempts already
-stored on a pending run must equal the same-length prefix of that list; append
-only the missing suffix. Reject mismatches, gaps, duplicates, reordering,
-extra stored attempts, and a terminal attempt that is not last.
+Number routing attempts from `1` without gaps inside each run. A terminal safe
+router result returned by `gemini_request.py` contains the complete ordered
+attempt list. Attempts already stored on a pending run must equal the
+same-length prefix of that list; append only the missing suffix. Reject
+mismatches, gaps, duplicates, reordering, extra stored attempts, and a terminal
+attempt that is not last.
+
+If the VM, session, or router process stops before a terminal safe router
+result is durably retained, the request log remains pending without a complete
+record of what happened on the network. The outcome is unknown. Do not invent
+an attempt or infer success or failure; stop and use the interrupted-run
+decision process before another Gemini call.
 
 On `task_specific_observation` or `direct_answer` success, return the response
 to the active conversation and write no Drive response file. `finish-run`

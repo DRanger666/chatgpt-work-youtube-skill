@@ -17,7 +17,9 @@ Use a transcript-first, cache-first workflow. Rebuild missing local tooling auto
 - Use `YouTubeArtifactCacheV3`; never fall back to cache v2.
 - Keep artifact files immutable and the per-video manifest search-only.
 - Keep Gemini lifecycle in the separate native execution journal.
-- Record every Gemini attempt, including failures.
+- Preserve every safe Gemini routing attempt returned to the active workflow.
+  An invocation interrupted before its terminal router result is retained has
+  an unknown network outcome; never invent a missing attempt.
 - Never submit an identical pending or completed execution.
 - Never repeat an identical failed execution without a documented permitted
   reason; never repeat a terminal request failure unchanged.

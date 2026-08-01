@@ -144,9 +144,9 @@ the matching pending request-log run. It contains:
 - mechanically derived `coveredTimeRanges` only when the registered structured
   format checker produces them;
 - `formatCheck` exactly when the declared output format requires one;
-- the complete safe router result for that run, including every routing
-  attempt, classification, cooldown, terminal attempt time, and the router's
-  `responseSha256`;
+- the complete safe router result returned for that run, including every
+  routing attempt present in that result, its classification and cooldown, the
+  terminal attempt time, and the router's `responseSha256`;
 - `responseSha256`; and
 - `responseJsonText`, containing the exact safe JSON text written by
   `gemini_request.py`.
@@ -179,8 +179,9 @@ above. It must copy the content class, output type, output format, and source
 range from the immutable logical request entry rather than accepting
 replacements from the caller. A saved file whose run binding or response-byte
 binding does not verify is rejected. It also validates and retains the
-complete safe router result so a later session can restore every attempt and
-the original completion time if the final request-log update was interrupted.
+complete safe router result so a later session can restore every attempt
+contained in that result and the original completion time if the final
+request-log update was interrupted.
 
 Write saved-response JSON in one deterministic format and hash the stored file
 bytes separately when adding it to the video material index. Never edit an
@@ -659,14 +660,23 @@ order, HTTP status, classification, selected credential alias, final routing
 status, and response hash before saving them. Never store credential values or
 fingerprints.
 
-The safe router result contains the complete ordered attempt list for the run,
-not merely attempts missing from the request log. When `finish-run` or an
-interrupted-completion operation encounters attempts already stored on the
-pending run, those stored attempts must equal the same-length prefix of the
-router result in attempt number and every safe field. Append only the missing
-suffix. An equal full list is an idempotent no-op. A mismatch, gap, duplicate,
-reordering, stored list longer than the router result, or terminal attempt that
-is not the router result's final attempt stops without changing the run.
+When `gemini_request.py` returns a terminal safe router result, that result
+contains the complete ordered attempt list for the run, not merely attempts
+missing from the request log. Retain every safe attempt in that result before
+making another Gemini call. When `finish-run` or an interrupted-completion
+operation encounters attempts already stored on the pending run, those stored
+attempts must equal the same-length prefix of the router result in attempt
+number and every safe field. Append only the missing suffix. An equal full list
+is an idempotent no-op. A mismatch, gap, duplicate, reordering, stored list
+longer than the router result, or terminal attempt that is not the router
+result's final attempt stops without changing the run.
+
+The system does not claim visibility into an invocation that ends before its
+terminal safe router result becomes available to the active session or is
+durably retained. In that state, the request log remains pending and contains
+no inferred network attempt. Whether Gemini received the request is unknown.
+Follow the interrupted-run procedure; do not invent a missing attempt, infer
+success or failure, or retry automatically.
 
 ### Finishing a one-time run
 
@@ -864,7 +874,8 @@ approved.
 - each saved response verifies back to exactly one request ID, run number, and
   exact request hash;
 - each saved response retains the validated safe router result needed to
-  restore every routing attempt and the original run completion time;
+  restore every routing attempt contained in that result and the original run
+  completion time;
 - existing pending-run attempts must be an exact prefix of retained router
   history; only the missing suffix is appended, and conflicting, reordered,
   duplicated, gapped, or extra attempts are rejected;
@@ -910,6 +921,9 @@ approved.
 ### Interruption behavior
 
 - a pending run from an unavailable session stops;
+- an invocation interrupted before its terminal safe router result is retained
+  leaves the run pending with an unknown network outcome; no missing attempt or
+  outcome is invented;
 - exact run-linked response discovery, integrity verification, user-confirmed
   session cessation, and completion without another Gemini call;
 - one-time pending runs perform no response-file search and require the user's

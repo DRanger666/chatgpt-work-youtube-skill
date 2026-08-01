@@ -215,7 +215,7 @@ The deterministic `<videoId>--gemini-executions.json` journal owns:
 - route, model, and requested coverage;
 - pending, completed, failed, and reconciled abandonment history;
 - session-specific writer ownership and lease expiry;
-- every safe network attempt from `ROUTING_JSON`;
+- every safe network attempt present in retained `ROUTING_JSON`;
 - selected bucket, retry delay, backoff, cooldown, failure classification, and
   earliest available cooldown when present;
 - documented authorization for each identical failed or abandoned retry;
@@ -233,6 +233,11 @@ execution, save the pending journal to Drive, and only then invoke
 routing metadata. Preserve primary, fallback, and bounded transient attempts
 as separate entries. A failure caused by no healthy bucket may contain zero
 network attempts but must retain its earliest cooldown.
+
+If the router invocation ends before `ROUTING_JSON` is retained, the journal
+remains pending with an unknown network outcome and no inferred attempt. Never
+invent the missing history or infer an outcome; stop for the user's
+interrupted-run decision before another Gemini call.
 
 An identical pending or completed execution blocks submission. An identical
 failed or abandoned execution requires a non-empty recorded retry reason.
