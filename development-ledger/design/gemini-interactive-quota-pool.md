@@ -103,39 +103,79 @@ Keep request history in the per-video Gemini request log defined in
 [`youtube-saved-work.md`](youtube-saved-work.md). The log is separate from the
 video material index. Before routing, the request entry already contains the
 exact prompt and its predeclared `contentClass`, `outputType`, and
-`outputFormat`. The router verifies those values against the pending request
-but never reclassifies them. A request entry preserves the router's safe
-attempt data:
+`outputFormat`. The router verifies those values against the logical request
+and its pending run but never reclassifies them. Each deliberate execution is
+a numbered run, and each credential or network try is a routing attempt inside
+that run. Bind each router result to both `requestId` and `runNumber`. This
+abridged example shows the nesting:
 
 ```json
 {
   "fileFormatVersion": 1,
-  "requestStatus": "succeeded",
-  "routingAttempts": [
+  "requests": [
     {
-      "bucket": "primary",
-      "httpStatus": 429,
-      "classification": "rate_limited",
-      "cooldownUntil": "..."
-    },
-    {
-      "bucket": "fallback",
-      "httpStatus": 200,
-      "classification": "success"
+      "requestId": "...",
+      "runs": [
+        {
+          "runNumber": 1,
+          "exactRequestSha256": "...",
+          "startedAt": "...",
+          "endedAt": "...",
+          "runStatus": "failed",
+          "routingAttempts": [
+            {
+              "bucket": "primary",
+              "httpStatus": 429,
+              "classification": "rate_limited",
+              "cooldownUntil": "..."
+            },
+            {
+              "bucket": "fallback",
+              "httpStatus": 429,
+              "classification": "rate_limited",
+              "cooldownUntil": "..."
+            }
+          ]
+        },
+        {
+          "runNumber": 2,
+          "exactRequestSha256": "...",
+          "startedAt": "...",
+          "endedAt": "...",
+          "runStatus": "succeeded",
+          "retryAuthorization": {
+            "authorizedAt": "...",
+            "reason": "User approved another run",
+            "usedAt": "..."
+          },
+          "routingAttempts": [
+            {
+              "bucket": "primary",
+              "httpStatus": 200,
+              "classification": "success"
+            }
+          ],
+          "savedResponseId": "...",
+          "savedResponseDriveFileId": "...",
+          "savedResponseFileSha256": "..."
+        }
+      ]
     }
   ]
 }
 ```
 
-An identical failed request may run again only when the log contains a
-documented permitted retry reason. Preserve prior attempts during that retry.
-Never include a key, authorization header, key fragment, or key fingerprint.
+An identical failed request may run again only by appending a new run with a
+documented authorization. Preserve every earlier run and its attempts. Do not
+persist a separate request-level status, authorization, cooldown, or response
+summary. Never include a key, authorization header, key fragment, or key
+fingerprint.
 
 ## Error policy
 
 | Response | Classification | Action |
 |---|---|---|
-| `2xx` | Success | Return and save the response |
+| `2xx` | Success | Return and save the response; finish the run |
 | `429 RESOURCE_EXHAUSTED` | Project rate limit | Cool down bucket; try other healthy bucket |
 | `408`, `500`, `502`, `503`, `504` | Transient | Bounded backoff with jitter; then fail over |
 | `401` or credential-specific `403` | Credential failure | Disable bucket for run; try other bucket |
@@ -154,7 +194,8 @@ Use deterministic local HTTP fixtures before live use:
 - terminal `400` with no fallback call;
 - invalid primary credential followed by fallback success;
 - cooldown persistence without secret material;
-- request-log retry authorization and preservation of earlier attempts.
+- request-log retry authorization, monotonic run numbering, router-result
+  binding to the correct run, and preservation of every earlier run.
 
 After offline tests pass, make one inexpensive validation request per
 credential. Do not stress-test quota or deliberately provoke throttling.

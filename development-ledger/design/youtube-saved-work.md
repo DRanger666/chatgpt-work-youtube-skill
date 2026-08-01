@@ -12,7 +12,7 @@
 - [Finding and reusing saved work](#finding-and-reusing-saved-work)
 - [Checking declared response formats](#checking-declared-response-formats)
 - [Logging and sending a Gemini request](#logging-and-sending-a-gemini-request)
-- [Interrupted requests](#interrupted-requests)
+- [Interrupted runs](#interrupted-runs)
 - [Same-video processing rule](#same-video-processing-rule)
 - [No compatibility layer for the unmerged design](#no-compatibility-layer-for-the-unmerged-design)
 - [Required tests](#required-tests)
@@ -48,8 +48,8 @@ It must support these ordinary situations:
 5. Save every successful Gemini response during the normal workflow, including
    narrowly task-specific observations and direct answers that must not enter
    ordinary material search.
-6. Avoid automatically repeating a request that is already known to be
-   pending, successful, failed, or interrupted.
+6. Avoid automatically repeating a request whose latest run is already known
+   to be pending, successful, failed, or interrupted.
 7. Rebuild a missing per-video material index by inspecting saved-response
    files.
 
@@ -69,9 +69,11 @@ as public aliases or compatibility wrappers.
 | Per-video list of reusable source material | Video material index |
 | One complete successful Gemini response plus its classification | Saved Gemini response |
 | Per-video history of Gemini requests | Gemini request log |
+| One deliberate execution of a logical request | Authorized run |
+| One HTTP try made through a particular credential | Routing attempt |
 | Portion of a video represented by saved work | Covered time range |
 | Check that the logged request is the file being sent | Request-file verification |
-| Request left pending by an unavailable session | Interrupted Gemini request |
+| Run left pending by an unavailable session | Interrupted Gemini run |
 | Script for saving responses and finding reusable material | `scripts/saved_gemini_responses.py` |
 | Script for request history and retry decisions | `scripts/gemini_request_log.py` |
 | Material-index filename | `<videoId>--video-material-index.json` |
@@ -86,18 +88,22 @@ The implementation must remove or replace these public names:
 Internal variable names, command names, and JSON fields must follow the same
 vocabulary. Use `fileFormatVersion`, `materials`, `savedResponseId`,
 `contentClass`, `outputType`, `outputFormat`, `coveredTimeRanges`, `requestId`,
-and `requestStatus`. Do not retain `schemaVersion`, `artifacts`, `artifactId`,
-`savedOutputId`, `validCoverage`, or the old writer-management commands in the
+`runs`, `runNumber`, and `runStatus`. Do not retain `schemaVersion`,
+`artifacts`, `artifactId`, `savedOutputId`, `validCoverage`, a singular
+top-level `requestStatus`, or the old writer-management commands in the
 replacement files.
 
 The saved-response script must expose plain command names equivalent to:
 `save-response`, `init-material-index`, `add-to-material-index`,
 `rebuild-material-index`, `find-material`, `verify-selected`, and
 `plan-missing-ranges`. The request-log script must expose command names
-equivalent to: `init-log`, `start-request`, `verify-request`, `finish-request`,
-`mark-interrupted`, and `authorize-retry`. The worker may combine commands when
-that removes duplicated input or an unsafe intermediate step, but it must not
-restore the old terminology.
+equivalent to: `init-log`, `start-run`, `verify-run`, `finish-run`, and
+`mark-run-interrupted`. Starting the same logical request again appends an
+authorized run; it does not replace the request entry. For every run after the
+first, `start-run` must record the user's authorization and append the pending
+run in the same update. Do not create a separate request-level authorization
+slot. The worker may combine commands when that removes duplicated input or an
+unsafe intermediate step, but it must not restore the old terminology.
 
 ## Files kept on Google Drive
 
@@ -121,7 +127,7 @@ Question answered: **What exactly did Gemini return?**
 
 Create one self-contained JSON file for every successful Gemini response in
 the normal workflow. Build it by reading the actual request and response
-files and the matching pending request-log entry. It contains:
+files and the matching pending request-log run. It contains:
 
 - `fileFormatVersion`;
 - normalized `videoId`;
@@ -207,7 +213,14 @@ about it?**
 
 Use one request-log file per normalized video ID. Its top-level fields are
 `fileFormatVersion`, `videoId`, `requests`, and `updatedAt`. Each request entry
-contains:
+describes one logical Gemini request and contains immutable fields shared by
+all deliberate executions of that request:
+
+```text
+Logical request
+└── Authorized run
+    └── Routing attempt
+```
 
 - `requestId`;
 - normalized `videoId` and `requestedTimeRange`;
@@ -215,20 +228,40 @@ contains:
 - `promptText`, copied exactly from the actual request file;
 - `outputType` and `outputFormat`;
 - `endpoint`, `model`, and `requestMethod`;
-- `exactRequestSha256` for the exact request-file bytes;
 - `normalizedRequestSha256` for normalized request JSON;
-- `requestStatus`: `pending`, `succeeded`, `failed`, or `interrupted`;
-- `startedAt` and `updatedAt`;
-- safe `routingAttempts` and `cooldownUntil` information returned by
-  `gemini_request.py`;
-- `savedResponseId`, `savedResponseDriveFileId`, and
-  `savedResponseFileSha256` after success; and
-- `retryAuthorization` with its reason when required.
+- `runs`, an ordered list of authorized runs.
 
-A retry authorization applies to one `requestId`, records `authorizedAt`, its
-plain reason, and `usedAt`, and is consumed by one retry. Retrying does not
-create a different request ID merely to evade the earlier history; it appends
-the new routing attempts to the same request entry.
+Each run contains:
+
+- `runNumber`, starting at `1` and increasing by exactly one;
+- `exactRequestSha256` for the exact request-file bytes used by that run;
+- `startedAt` and `endedAt`, with `endedAt` set to `null` while pending;
+- `runStatus`: `pending`, `succeeded`, `failed`, or `interrupted`;
+- safe `routingAttempts` returned by `gemini_request.py` for that run, with
+  each attempt carrying its applicable `cooldownUntil` when one exists;
+- `interruptionReason` when the user marks the run interrupted;
+- `retryAuthorization` on every run after the first, recording `authorizedAt`,
+  its plain reason, and `usedAt`; and
+- `savedResponseId`, `savedResponseDriveFileId`, and
+  `savedResponseFileSha256` when that run succeeds, absent from other statuses.
+
+Create the request entry and run `1` together. Every later deliberate execution
+appends run `N + 1` with a new consumed authorization. Credential fallback and
+bounded transient retries performed by the router remain routing attempts
+inside one run; they do not increment `runNumber`.
+
+A request may have at most one pending run, and it must be the
+highest-numbered run. Do not append another run until that run is terminal.
+Only that pending run may receive new routing attempts and then transition to
+one terminal status. Once terminal, a run is never rewritten or removed.
+Previous runs, authorizations, attempts, cooldown evidence, and response
+references remain distinguishable.
+
+Do not store a separately writable request-level status, cooldown,
+authorization, or saved-response reference. Calculate the current status from
+the highest-numbered run, and enumerate all successful runs when retrieving
+earlier responses. A later pending, failed, or interrupted run never hides or
+erases an earlier successful response.
 
 The exact prompt is retained so a later Work session can understand what the
 request asked Gemini to observe or answer. The request log supports duplicate
@@ -248,9 +281,9 @@ construction and before any network call:
 | `direct_answer` | Gemini's own reasoning or answer to a question | Never enters ordinary material search; use only deliberately |
 
 The class describes why the request is being made, not whether the returned
-text later looks impressive. Bind it into the pending request-log entry, but do
-not make this local classification part of request identity. The
-response-saving command must copy it from that entry and must not accept a
+text later looks impressive. Bind it into the logical request entry before its
+first run, but do not make this local classification part of request identity.
+The response-saving command must copy it from that entry and must not accept a
 replacement class from the caller. Do not silently promote a task-specific
 observation or direct answer into `video_material` after seeing the response.
 
@@ -265,9 +298,8 @@ the request log. Only `video_material` may be added to the material index.
 Task-specific observations and direct answers remain available through the
 known request that produced them, which is sufficient for the current task and
 for preventing an identical repeat without bloating later material searches.
-This preservation is required: a request must not be marked `succeeded` and
-thereby block repetition while its returned content is unavailable to a fresh
-Work VM.
+This preservation is required: a run must not be marked `succeeded` and thereby
+block repetition while its returned content is unavailable to a fresh Work VM.
 
 Do not add a separate task index, automatic semantic promotion, retention
 policy, or cleanup subsystem in this release. Saved JSON responses are small;
@@ -315,14 +347,14 @@ For each video:
 7. Identify any remaining material or visual-sensory gap.
 8. Declare the request's `contentClass`, `outputType`, and `outputFormat`, then
    construct a Gemini request only for that gap.
-9. Read the exact request file and prompt into the Gemini request log and save
-   its `pending` entry to Drive.
-10. Verify the same request file and declared class immediately before Gemini
-    credentials are loaded.
+9. Read the exact request file and prompt into the Gemini request log. Create
+   the logical request if needed and append its next authorized `pending` run.
+10. Verify the same request file, declared class, request ID, and run number
+    immediately before Gemini credentials are loaded.
 11. Send one Gemini request at a time.
 12. Save the complete successful response, including a required format-check
     result when the declared format has a checker.
-13. Finish the request-log entry with the saved-response reference.
+13. Finish that run with the saved-response reference.
 14. If and only if the class is `video_material`, add the response to the video
     material index after the applicable structured check or free-form review.
 15. Give task-specific observations to ChatGPT for reasoning without indexing
@@ -424,9 +456,9 @@ covers only its verified portion, and the remaining range is processed with a
 smaller or otherwise changed request. A malformed response remains saved in
 full with a failed format check but contributes no covered time.
 
-Do not repeat an identical successful request automatically merely because its
+Do not repeat an identical successful run automatically merely because its
 response failed its format check. Show the saved response and require the user
-to approve an identical retry or change the request.
+to approve another run or change the request.
 
 ## Logging and sending a Gemini request
 
@@ -454,16 +486,18 @@ supported YouTube URL with the normalized video ID representation, sorting
 object keys, and writing JSON without insignificant whitespace. Do not reorder
 arrays or rewrite prompt text.
 
-The pending entry also stores the exact request-file SHA-256. Immediately
-before loading a Gemini credential, `gemini_request.py` must verify:
+The pending run stores the exact request-file SHA-256. Immediately before
+loading a Gemini credential, `gemini_request.py` must verify:
 
 - the exact request-file hash;
 - the normalized request hash and request ID;
+- the expected `runNumber`;
 - the video ID in every supplied YouTube URI;
 - the start and end offsets;
 - the declared content class, output type, and output format;
 - the endpoint, model, and method; and
-- that the matching request-log entry is still `pending`.
+- that this is the request entry's highest-numbered run and its `runStatus` is
+  still `pending`.
 
 Any mismatch stops before network access.
 
@@ -471,49 +505,56 @@ One logged Gemini request may contain only one normalized YouTube video ID.
 For comparisons, process each video separately and compare the saved responses
 afterward; do not place a multi-video request inside one per-video log.
 
-Before starting a request, apply these rules:
+Before appending another run, calculate the current status from the
+highest-numbered run. Surface the saved responses from every earlier successful
+run, then apply these rules:
 
 - `pending`: do not send another copy;
-- `succeeded`: use the linked saved response; an identical retry requires
-  explicit user authorization;
-- `failed`: require a recorded retry reason, respect the saved cooldown, and
-  never repeat an unchanged terminal request error; and
-- `interrupted`: require explicit user authorization and a recorded reason.
+- `succeeded`: use the saved response; an identical retry requires a new
+  explicit authorization;
+- `failed`: require a new authorization with a recorded reason, respect every
+  unexpired saved cooldown, and never repeat an unchanged terminal request
+  error; and
+- `interrupted`: require a new explicit authorization with a recorded reason.
+
+Attach that authorization to the new run. The first run has no
+`retryAuthorization`; every later run must have exactly one, and one
+authorization cannot start two runs.
 
 Preserve each safe primary, fallback, and bounded transient attempt returned
-by the router. Validate timestamp order, HTTP status, classification, selected
-credential alias, and final routing status before saving them. Never store
-credential values or fingerprints.
+by the router inside the run that made it. Bind the router's result to both
+`requestId` and `runNumber`. Validate timestamp order, HTTP status,
+classification, selected credential alias, and final routing status before
+saving them. Never store credential values or fingerprints.
 
-## Interrupted requests
+## Interrupted runs
 
-A request may be interrupted when its Drive entry remains `pending` but the
-Work session that started it cannot be confirmed as active. Elapsed time alone
-does not prove that the session stopped. The system may know that the request
-was prepared; it may not know whether Gemini received it or returned a
-response.
+A run may be interrupted when it remains `pending` but the Work session that
+started it cannot be confirmed as active. Elapsed time alone does not prove
+that the session stopped. The system may know that the request was prepared;
+it may not know whether Gemini received it or returned a response.
 
-When a later session encounters such an entry:
+When a later session encounters such a run:
 
 1. stop before calling Gemini;
-2. show the user the video, requested time range, start time, request ID, and
-   any saved attempt or response evidence;
+2. show the user the video, requested time range, start time, request ID, run
+   number, and any saved attempt or response evidence;
 3. ask the user to confirm that the earlier session is no longer doing this
-   work and whether to mark the request `interrupted`;
+   work and whether to mark the run `interrupted`;
 4. record the user's decision and reason; and
 5. retry only after explicit authorization and any saved cooldown.
 
 An independently verified saved response may still contain useful video
 material, because material identity does not depend on knowing which request
 produced it. Do not, however, automatically claim that an unlinked response
-completed the pending request. Show it as evidence during the user's decision.
+completed the pending run. Show it as evidence during the user's decision.
 Do not add a two-phase response-upload protocol, invent missing network
 attempts, infer that the request failed, or claim exactly-once processing.
 
 The normal write order remains:
 
 ```text
-save pending request → call Gemini → save response → finish request log
+append pending run → call Gemini → save response → finish run
 ```
 
 A VM can disappear between those steps. That rare ambiguity is accepted and
@@ -527,10 +568,11 @@ different videos may be processed independently.
 
 Google Drive cannot acquire a lock and replace a file as one indivisible
 operation. Therefore the system does not implement session ownership,
-expiry-based takeover, handoff commands, or automatic takeover. A pending
-request blocks later sequential work, but two truly simultaneous sessions can
-still race. State this limitation plainly rather than claiming mutual
-exclusion.
+expiry-based takeover, handoff commands, or automatic takeover. A pending run
+blocks later sequential work, but two truly simultaneous sessions can still
+race. The run list is append-only as a data rule; Drive still replaces the JSON
+file during each update and does not provide an atomic append. State this
+limitation plainly rather than claiming mutual exclusion.
 
 ## No compatibility layer for the unmerged design
 
@@ -571,7 +613,7 @@ approved.
 - all three content classes are declared before request construction and bound
   immutably to the request entry without changing request identity;
 - relabelling an existing request cannot permit another Gemini call;
-- the pending request's class cannot be replaced while saving its response;
+- the logical request's class cannot be replaced while saving a run's response;
 - the exact prompt is retained in the request log;
 - every successful response is preserved and linked from its request;
 - identical response text from different source time ranges receives distinct
@@ -579,10 +621,34 @@ approved.
 - only `video_material` can enter the material index;
 - a structured format always runs its registered checker, regardless of
   content class;
-- a free-form format never contains a fabricated format-check result; and
+- a free-form format never contains a fabricated format-check result;
 - free-form material cannot claim indexed time outside its source range;
 - systematic OCR can enter material search while an otherwise similar
   one-slide task-specific observation cannot.
+
+### Authorized-run history
+
+- run numbers start at `1`, increase without gaps, and are unique within the
+  logical request;
+- at most one run is pending, it is highest-numbered, and no later run is
+  appended before it becomes terminal;
+- run `1` has no retry authorization, while every later run has exactly one
+  consumed authorization that cannot be reused;
+- the exact request-file hash is stored and verified separately for each run;
+- `endedAt` is `null` while pending and present when the run becomes terminal;
+- router attempts are bound to the correct request ID and run number;
+- credential failover and bounded transient retries remain attempts inside one
+  run;
+- terminal runs are immutable, and appending another run preserves every
+  earlier authorization, attempt, cooldown, and response reference;
+- two successful authorized runs retain two separately verifiable response
+  references;
+- a succeeded run requires its complete response reference, while other
+  statuses contain none;
+- a later failed run does not hide an earlier successful response;
+- current status is calculated from the highest-numbered run; and
+- no request-level status, cooldown, authorization, or response summary is
+  persisted as separately writable truth.
 
 ### Transcript checking
 
@@ -599,8 +665,8 @@ approved.
 - request JSON formatting changes preserve request ID but change exact-file
   hash;
 - mismatched request file, video URI, time range, endpoint, model, method, or
-  pending entry stops before credential loading;
-- successful, failed, pending, and interrupted duplicate handling;
+  highest pending run stops before credential loading;
+- successful, failed, pending, and interrupted latest-run handling;
 - explicit retry reasons and cooldown enforcement;
 - unchanged terminal request failure rejection;
 - routing-attempt consistency; and
@@ -608,9 +674,9 @@ approved.
 
 ### Interruption behavior
 
-- a pending request from an unavailable session stops;
-- no automatic retry or claim that an unlinked response completed a request;
-- explicit user authorization is recorded before another request; and
+- a pending run from an unavailable session stops;
+- no automatic retry or claim that an unlinked response completed a run;
+- explicit user authorization is attached before another run starts; and
 - no writer, lease, handoff, reconciliation, or two-phase-upload interface
   remains.
 
@@ -619,7 +685,7 @@ approved.
 Do not add any of the following without observed need and a new design review:
 
 - automatically treating an unlinked saved response as proof that a pending
-  request completed;
+  run completed;
 - two-phase response commits;
 - automatic reconstruction of unknown network outcomes;
 - cross-session atomic locking or an external coordination service;

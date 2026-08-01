@@ -160,9 +160,9 @@ three reopened items below are governed by
   session ownership, expiry, handoff, and automatic crash-handling machinery
   that the interactive workflow does not justify.
 - Goal: Keep a plain per-video Gemini request log. Verify that the exact request
-  file recorded as pending is the one sent, preserve routing attempts and
-  cooldowns, and stop for the user's decision when an earlier request has an
-  uncertain outcome.
+  file recorded for a pending run is the one sent, preserve every authorized
+  run and its routing attempts, and stop for the user's decision when an
+  earlier run has an uncertain outcome.
 - Evidence:
   - Commit `763d4cf` stopped consuming `ROUTING_JSON` and removed documented
     retry authorization and attempt preservation.
@@ -173,17 +173,37 @@ three reopened items below are governed by
     routing-validation work, but their writer-management interface is rejected.
   - Commit `f65a965` is a diagnostic checkpoint, not the implementation
     specification.
+  - Commit `36b3ae3` still represented status, authorization, and response
+    reference as singular request-level fields while allowing authorized
+    repeats. A later run could therefore overwrite the history of an earlier
+    one.
 - Required release work:
   - [ ] Replace `scripts/gemini_execution_journal_v3.py` with
         `scripts/gemini_request_log.py`; do not leave a compatibility wrapper.
-  - [ ] Build each pending entry by reading the actual request file. Store its
-        exact prompt, exact-file hash, normalized-request hash, video ID, clip,
+  - [ ] Expose run-oriented operations such as `start-run`, `verify-run`,
+        `finish-run`, and `mark-run-interrupted`. For run numbers above `1`,
+        record authorization and append the pending run in the same update.
+  - [ ] Build each logical request entry by reading the actual request file.
+        Store its exact prompt, normalized-request hash, video ID, clip,
         endpoint, model, method, predeclared `contentClass`, `outputType`, and
-        `outputFormat`.
-  - [ ] Make `gemini_request.py` verify that same information and the pending
-        request status before loading a credential.
+        `outputFormat` as immutable request-level fields.
+  - [ ] Store an ordered `runs` list under that request. Start `runNumber` at
+        `1`, increment without gaps, and keep exact request-file hash, times,
+        status, routing attempts, cooldown, authorization, and successful
+        response reference inside the corresponding run.
+  - [ ] Permit at most one pending run per request, require it to be the
+        highest-numbered run, and forbid appending another run before it is
+        terminal.
+  - [ ] Remove separately writable request-level status, authorization,
+        cooldown, and saved-response fields. Calculate current status from the
+        highest-numbered run and enumerate all successful runs when retrieving
+        responses.
+  - [ ] Make `gemini_request.py` verify the immutable request information,
+        exact hash, request ID, run number, and highest pending run before
+        loading a credential.
   - [ ] Bind content class, output type, and output format immutably to the
-        pending entry without adding local classification to request identity.
+        logical request entry without adding local classification to request
+        identity.
         Reject conflicting metadata for an existing request ID and reject a
         caller's attempt to replace it after the call.
   - [ ] Let a purpose-specific builder fix an unambiguous class, including
@@ -193,26 +213,33 @@ three reopened items below are governed by
         request log, routing metadata, and local bucket-state file; update the
         operational documents and tests in the same implementation commit.
   - [ ] Persist every safe primary, fallback, transient, failed, and successful
-        routing attempt. Preserve earlier attempts through an authorized retry.
+        routing attempt inside the run that made it. Bind routing output to
+        both request ID and run number.
+  - [ ] Keep bounded router retries and credential failover inside one run.
+        Every later deliberate execution must append another run with one new,
+        consumed user authorization; never overwrite an earlier run.
   - [ ] Enforce saved cooldowns and reject unchanged terminal request errors.
   - [ ] Require a saved-response reference before marking any successful
-        request `succeeded`, including a failed-format response,
+        run `succeeded`, including a failed-format response,
         task-specific observation, or direct answer. Retain its Drive file ID
         and file SHA-256 so non-indexed responses remain directly retrievable
         and verifiable.
-  - [ ] Use only `pending`, `succeeded`, `failed`, and `interrupted` request
-        states. An old pending request must stop and ask the user; elapsed time
-        alone must not authorize another call.
+  - [ ] Use only `pending`, `succeeded`, `failed`, and `interrupted` run states.
+        Keep `endedAt` null while pending and require it for a terminal run. An
+        old pending run must stop and ask the user; elapsed time alone must not
+        authorize another call.
   - [ ] Remove writer, lease, renewal, release, handoff, takeover, and automatic
         reconciliation commands and tests.
   - [ ] State the supported same-video rule plainly: do not intentionally use
         two write-capable sessions for one video; Drive cannot guarantee a
         lock between truly simultaneous sessions.
   - [ ] Add offline tests for request-file mismatch, all duplicate states,
-        explicit retry reasons, cooldowns, interrupted-request decisions,
+        explicit retry reasons, cooldowns, interrupted-run decisions,
         routing consistency, immutable pre-call classification, relabelling
-        that cannot bypass duplicate prevention, exact prompt retention, and
-        absence of credentials in saved files.
+        that cannot bypass duplicate prevention, exact prompt retention,
+        monotonic run numbering, multiple successful response references,
+        append-only terminal history, derived current status, and absence of
+        credentials in saved files.
 - Related documents:
   - [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
   - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
