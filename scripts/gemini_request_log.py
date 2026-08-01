@@ -838,8 +838,10 @@ def finish_run(
     router_result=None,
     response_path=None,
     saved_response_path=None,
+    candidate_response_paths=None,
     saved_response_drive_file_id=None,
     confirmed_session_stopped=False,
+    confirmed_response_enumeration=False,
     updated_at=None,
 ):
     original_log = log
@@ -852,18 +854,43 @@ def finish_run(
 
     saved_response = None
     saved_file_hash = None
-    if router_result is None and saved_response_path is not None:
+    if router_result is None:
         if request["contentClass"] != "video_material":
-            raise RequestLogError("One-time content classes cannot link saved responses")
-        import saved_gemini_responses as saved_responses
-
-        saved_path = Path(saved_response_path).resolve()
-        saved_response = saved_responses.validate_saved_response_file(saved_path)
-        saved_file_hash = common.sha256_hex(saved_path.read_bytes())
+            raise RequestLogError("One-time interrupted runs have no saved response to recover")
         if confirmed_session_stopped is not True:
             raise RequestLogError(
                 "Finishing from a retained response requires confirmation that the earlier session stopped"
             )
+        if confirmed_response_enumeration is not True:
+            raise RequestLogError(
+                "Interrupted completion requires confirmed saved-response enumeration"
+            )
+        import saved_gemini_responses as saved_responses
+
+        matches = []
+        for candidate in candidate_response_paths or []:
+            candidate_path = Path(candidate).resolve()
+            raw = common.load_json(candidate_path)
+            claims_run = (
+                isinstance(raw, dict)
+                and raw.get("requestId") == request_id
+                and raw.get("runNumber") == run_number
+            )
+            if not claims_run:
+                continue
+            candidate_response = saved_responses.validate_saved_response_file(
+                candidate_path
+            )
+            if candidate_response["exactRequestSha256"] != run["exactRequestSha256"]:
+                raise RequestLogError("A saved response claims the run with a conflicting request hash")
+            matches.append((candidate_path, candidate_response))
+        if len(matches) != 1:
+            raise RequestLogError(
+                "Interrupted completion requires exactly one verified response for the run"
+            )
+        saved_path, saved_response = matches[0]
+        saved_response_path = saved_path
+        saved_file_hash = common.sha256_hex(saved_path.read_bytes())
         router_result = saved_response["routerResult"]
     if router_result is None:
         raise RequestLogError("finish-run requires a safe router result")
@@ -1100,8 +1127,10 @@ def command_finish_run(args):
         router_result=router_result,
         response_path=args.response,
         saved_response_path=args.saved_response,
+        candidate_response_paths=args.candidate_saved_response,
         saved_response_drive_file_id=args.saved_response_drive_file_id,
         confirmed_session_stopped=args.confirmed_session_stopped,
+        confirmed_response_enumeration=args.confirmed_response_enumeration,
         updated_at=args.updated_at,
     )
     common.write_json(Path(args.output), log)
@@ -1194,8 +1223,10 @@ def build_parser():
     finish.add_argument("--router-result")
     finish.add_argument("--response")
     finish.add_argument("--saved-response")
+    finish.add_argument("--candidate-saved-response", action="append", default=[])
     finish.add_argument("--saved-response-drive-file-id")
     finish.add_argument("--confirmed-session-stopped", action="store_true")
+    finish.add_argument("--confirmed-response-enumeration", action="store_true")
     finish.add_argument("--updated-at")
     finish.add_argument("--output", required=True)
     finish.set_defaults(handler=command_finish_run)
