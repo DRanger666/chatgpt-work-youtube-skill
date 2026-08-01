@@ -132,6 +132,8 @@ files and the matching pending request-log run. It contains:
 - `fileFormatVersion`;
 - normalized `videoId`;
 - `savedResponseId`;
+- `requestId`, `runNumber`, and `exactRequestSha256`, copied from the verified
+  pending run;
 - predeclared `contentClass`;
 - `outputType` and `outputFormat`;
 - `sourceTimeRange`, copied from the matching request's requested range;
@@ -139,19 +141,32 @@ files and the matching pending request-log run. It contains:
 - mechanically derived `coveredTimeRanges` only when the registered structured
   format checker produces them;
 - `formatCheck` exactly when the declared output format requires one;
+- the complete safe router result for that run, including every routing
+  attempt, classification, cooldown, and terminal attempt time;
 - `responseSha256`; and
 - `responseJsonText`, containing the exact safe JSON text written by
   `gemini_request.py`.
 
 Calculate `responseSha256` from the exact UTF-8 bytes of `responseJsonText`.
-Calculate `savedResponseId` from a stable JSON representation of `videoId`,
-`contentClass`, `outputType`, `outputFormat`, `sourceTimeRange`, applicable
-checked content metadata, and `responseSha256`. The source range prevents
-identical text returned for different parts of one video from being treated as
-the same saved response. Do not include request ID, prompt, model, credential
-choice, routing attempts, or other request-run history. An identical
-classified response for the same source range therefore has the same identity
-regardless of which Gemini request run produced it.
+Calculate `savedResponseId` from a stable JSON representation of every
+immutable saved-response field listed above except `savedResponseId` and
+`responseJsonText`; use `responseSha256` to represent the exact response text.
+One successful run therefore creates one self-identifying saved-response
+record, and any change to its run binding, classified content metadata, format
+check, safe router result, or returned content changes the ID. Two authorized
+runs have different saved-response IDs even when Gemini returns identical
+bytes; `responseSha256` still reveals that their returned content is
+identical.
+
+The response-saving command must accept the router result produced by
+`gemini_request.py` and verify that its request ID, run number, and exact
+request hash match the pending run before writing the file. It must copy the
+content class, output type, output format, and source range from the immutable
+logical request entry rather than accepting replacements from the caller. A
+saved file whose declared run binding does not verify is rejected. It must
+also validate and retain the complete safe router result so a later session
+can restore every attempt and the original completion time if the final
+request-log update was interrupted.
 
 Write saved-response JSON in one deterministic format and hash the stored file
 bytes separately when adding it to the video material index. Never edit an
@@ -269,6 +284,11 @@ prevention and resuming the same known request. It is not a semantic search
 index for future tasks and does not answer whether a response is reusable video
 material. That decision belongs to the video material index.
 
+The relationship is deliberately recorded in both directions: a successful
+run contains the saved-response reference, and the saved response contains the
+verified request ID, run number, and exact request hash. This does not put
+request history in the video material index.
+
 ## Classify each Gemini request before sending it
 
 Every Gemini request must declare exactly one `contentClass` before request
@@ -352,8 +372,10 @@ For each video:
 10. Verify the same request file, declared class, request ID, and run number
     immediately before Gemini credentials are loaded.
 11. Send one Gemini request at a time.
-12. Save the complete successful response, including a required format-check
-    result when the declared format has a checker.
+12. Save the complete successful response after verifying that the router
+    result and pending run have the same request ID, run number, and exact
+    request hash. Include a required format-check result when the declared
+    format has a checker.
 13. Finish that run with the saved-response reference.
 14. If and only if the class is `video_material`, add the response to the video
     material index after the applicable structured check or free-form review.
@@ -537,19 +559,33 @@ it may not know whether Gemini received it or returned a response.
 When a later session encounters such a run:
 
 1. stop before calling Gemini;
-2. show the user the video, requested time range, start time, request ID, run
-   number, and any saved attempt or response evidence;
-3. ask the user to confirm that the earlier session is no longer doing this
-   work and whether to mark the run `interrupted`;
-4. record the user's decision and reason; and
-5. retry only after explicit authorization and any saved cooldown.
+2. search that video's saved-response files for the exact request ID, run
+   number, and exact request hash;
+3. verify every candidate's response hash, stored-file hash, and immutable
+   request metadata;
+4. show the user the video, requested time range, start time, request ID, run
+   number, routing evidence, and exact saved-response evidence;
+5. ask the user to confirm that the earlier session is no longer doing this
+   work;
+6. when one exact saved response exists, finish the existing run as
+   `succeeded` without another Gemini call;
+7. when no exact saved response exists, ask whether to mark the run
+   `interrupted`, record the user's decision and reason, and permit another run
+   only after explicit authorization and every saved cooldown; and
+8. stop for investigation when multiple files claim the same request and run
+   or any binding or integrity check fails.
 
-An independently verified saved response may still contain useful video
-material, because material identity does not depend on knowing which request
-produced it. Do not, however, automatically claim that an unlinked response
-completed the pending run. Show it as evidence during the user's decision.
-Do not add a two-phase response-upload protocol, invent missing network
-attempts, infer that the request failed, or claim exactly-once processing.
+An independently verified unlinked response may still contain useful video
+material. It never completes the pending run. Show it as evidence during the
+user's decision, but use only an exact verified run-linked response and its
+retained safe router result to finish that run. Do not add a two-phase
+response-upload protocol, invent missing network attempts, infer that the
+request failed, or claim exactly-once processing.
+
+When a later session finishes a run from an exact saved response, set
+`endedAt` from the bound successful router attempt. Do not use the later repair
+time as the run's completion time; the request log's `updatedAt` records when
+the later Drive update occurred.
 
 The normal write order remains:
 
@@ -643,6 +679,14 @@ approved.
   earlier authorization, attempt, cooldown, and response reference;
 - two successful authorized runs retain two separately verifiable response
   references;
+- each saved response verifies back to exactly one request ID, run number, and
+  exact request hash;
+- each saved response retains the validated safe router result needed to
+  restore every routing attempt and the original run completion time;
+- a pending run with one exact verified response can be finished after the
+  user confirms the earlier session has stopped, without another network call;
+- an unlinked response cannot finish a pending run, and multiple claimants or
+  any binding mismatch stop for investigation;
 - a succeeded run requires its complete response reference, while other
   statuses contain none;
 - a later failed run does not hide an earlier successful response;
@@ -675,7 +719,11 @@ approved.
 ### Interruption behavior
 
 - a pending run from an unavailable session stops;
+- exact run-linked response discovery, integrity verification, user-confirmed
+  session cessation, and completion without another Gemini call;
 - no automatic retry or claim that an unlinked response completed a run;
+- `endedAt` restored from the bound router result rather than the later log
+  update;
 - explicit user authorization is attached before another run starts; and
 - no writer, lease, handoff, reconciliation, or two-phase-upload interface
   remains.
@@ -684,8 +732,7 @@ approved.
 
 Do not add any of the following without observed need and a new design review:
 
-- automatically treating an unlinked saved response as proof that a pending
-  run completed;
+- treating an unlinked saved response as proof that a pending run completed;
 - two-phase response commits;
 - automatic reconstruction of unknown network outcomes;
 - cross-session atomic locking or an external coordination service;

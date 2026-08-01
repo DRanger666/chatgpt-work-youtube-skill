@@ -171,6 +171,14 @@ persist a separate request-level status, authorization, cooldown, or response
 summary. Never include a key, authorization header, key fragment, or key
 fingerprint.
 
+On success, bind the router result to the request ID, run number, and exact
+request hash. The response-saving command verifies that binding and writes it
+and the complete safe router result into the saved response before the request
+log is finished. If that final log update is interrupted, a later session
+verifies the exact run-linked response, obtains confirmation that the earlier
+session has stopped, restores every routing attempt and the original terminal
+attempt time, and finishes the same run without routing another Gemini call.
+
 ## Error policy
 
 | Response | Classification | Action |
@@ -195,7 +203,9 @@ Use deterministic local HTTP fixtures before live use:
 - invalid primary credential followed by fallback success;
 - cooldown persistence without secret material;
 - request-log retry authorization, monotonic run numbering, router-result
-  binding to the correct run, and preservation of every earlier run.
+  binding to the correct run, saved-response back-link verification,
+  interrupted-write completion without another network call, and preservation
+  of every earlier run.
 
 After offline tests pass, make one inexpensive validation request per
 credential. Do not stress-test quota or deliberately provoke throttling.

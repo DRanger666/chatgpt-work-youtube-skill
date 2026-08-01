@@ -128,14 +128,17 @@ three reopened items below are governed by
   - [ ] Use file-format field names defined in `youtube-saved-work.md`; remove
         the old artifact, manifest, contract, and valid-coverage field names.
   - [ ] Keep request status, attempts, cooldowns, retry reasons, and session
-        information out of the video material index, saved-response file, and
-        saved-response identity.
+        information out of the video material index. Keep the saved response's
+        verified request ID, run number, and exact request hash out of material
+        search fields while retaining them in the saved file and its identity.
   - [ ] Save every successful Gemini response in full, including a malformed
         structured response and every task-specific observation or direct
         answer.
   - [ ] Copy the requested source time range into each saved response and its
-        identity so identical text from different video intervals cannot
-        collapse into one record.
+        content metadata. Calculate saved-response identity from every
+        immutable saved field, including video ID, request ID, run number,
+        exact request hash, safe router result, and response hash, so every
+        successful run has one self-identifying response record.
   - [ ] Remove the global `reusable` and `unusableReason` fields. Treat material
         index admission as the reuse decision; do not replace them with general
         `contentCheckStatus` or `contentCheckFailure` fields.
@@ -224,6 +227,18 @@ three reopened items below are governed by
         task-specific observation, or direct answer. Retain its Drive file ID
         and file SHA-256 so non-indexed responses remain directly retrievable
         and verifiable.
+  - [ ] Require the response-saving command to verify the router result's
+        request ID, run number, and exact request hash against the pending run,
+        then write that binding and the complete safe router result into the
+        saved response.
+  - [ ] When a later session finds one exact verified saved response for a
+        pending run, require user confirmation that the earlier session has
+        stopped and finish that existing run without another Gemini call. Use
+        the retained router result to restore every attempt and its terminal
+        attempt time for `endedAt`.
+  - [ ] Never finish a pending run from an unlinked response. Stop for
+        investigation when multiple responses claim one run or any binding or
+        integrity check fails.
   - [ ] Use only `pending`, `succeeded`, `failed`, and `interrupted` run states.
         Keep `endedAt` null while pending and require it for a terminal run. An
         old pending run must stop and ask the user; elapsed time alone must not
@@ -238,8 +253,10 @@ three reopened items below are governed by
         routing consistency, immutable pre-call classification, relabelling
         that cannot bypass duplicate prevention, exact prompt retention,
         monotonic run numbering, multiple successful response references,
-        append-only terminal history, derived current status, and absence of
-        credentials in saved files.
+        saved-response back-links, interrupted-write completion without a new
+        network call, unlinked and conflicting response rejection, append-only
+        terminal history, derived current status, and absence of credentials
+        in saved files.
 - Related documents:
   - [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
   - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
