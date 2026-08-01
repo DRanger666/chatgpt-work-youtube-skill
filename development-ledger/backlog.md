@@ -247,13 +247,19 @@ three reopened items below are governed by
         `responseNotSavedByPolicy: true` and forbid saved-response fields.
   - [ ] Require the response-saving command to verify the router result's
         request ID, run number, and exact request hash against the pending run,
-        then write that binding and the complete safe router result into the
-        saved response.
+        recompute SHA-256 over the exact response-file bytes, require equality
+        with the router result's `responseSha256`, then write that binding and
+        the complete safe router result into the saved response.
   - [ ] When a later session finds one exact verified saved response for a
         pending run, require user confirmation that the earlier session has
         stopped and finish that existing run without another Gemini call. Use
         the retained router result to restore every attempt and its terminal
         attempt time for `endedAt`.
+  - [ ] Number router attempts from `1` without gaps and require each successful
+        router result to contain the run's complete ordered attempt history.
+        Existing pending-run attempts must match an exact prefix; append only
+        the missing suffix and reject conflicts, duplicates, gaps, reordering,
+        extra stored attempts, or a non-final terminal attempt.
   - [ ] Never finish a pending run from an unlinked response. Stop for
         investigation when multiple responses claim one run or any binding or
         integrity check fails.
@@ -273,9 +279,10 @@ three reopened items below are governed by
         controlled output-type rejection, deliberate non-storage markers,
         monotonic run numbering, multiple successful reusable response
         references, saved-response back-links, interrupted-write completion
-        without a new network call, unlinked and conflicting response
-        rejection, append-only terminal history, derived current status, and
-        absence of credentials in saved files.
+        without a new network call, response-byte hash mismatch, attempt-prefix
+        reconciliation, unlinked and conflicting response rejection,
+        append-only terminal history, derived current status, and absence of
+        credentials in saved files.
 - Related documents:
   - [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
   - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)

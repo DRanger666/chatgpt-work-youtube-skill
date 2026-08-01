@@ -145,12 +145,20 @@ the matching pending request-log run. It contains:
   format checker produces them;
 - `formatCheck` exactly when the declared output format requires one;
 - the complete safe router result for that run, including every routing
-  attempt, classification, cooldown, and terminal attempt time;
+  attempt, classification, cooldown, terminal attempt time, and the router's
+  `responseSha256`;
 - `responseSha256`; and
 - `responseJsonText`, containing the exact safe JSON text written by
   `gemini_request.py`.
 
-Calculate `responseSha256` from the exact UTF-8 bytes of `responseJsonText`.
+`gemini_request.py` calculates `responseSha256` from the exact bytes of the
+response file it writes and includes that hash in every successful safe router
+result. The response-saving command rereads the response file without JSON
+normalization, recalculates SHA-256 over those exact bytes, and requires
+equality with the router's `responseSha256`. It then stores the exact response
+file text as `responseJsonText` and the verified hash as `responseSha256`. Any
+mismatch stops before a Drive file is written.
+
 Calculate `savedResponseId` from a stable JSON representation of every
 immutable saved-response field listed above except `savedResponseId` and
 `responseJsonText`; use `responseSha256` to represent the exact response text.
@@ -165,13 +173,14 @@ same video range always receive different saved-response IDs.
 
 The response-saving command accepts the router result produced by
 `gemini_request.py` and verifies that its request ID, run number, and exact
-request hash match the pending run before writing the file. It must copy the
-content class, output type, output format, and source range from the immutable
-logical request entry rather than accepting replacements from the caller. A
-saved file whose declared run binding does not verify is rejected. It must
-also validate and retain the complete safe router result so a later session
-can restore every attempt and the original completion time if the final
-request-log update was interrupted.
+request hash match the pending run before writing the file. It verifies the
+router's response hash against the exact response-file bytes as described
+above. It must copy the content class, output type, output format, and source
+range from the immutable logical request entry rather than accepting
+replacements from the caller. A saved file whose run binding or response-byte
+binding does not verify is rejected. It also validates and retains the
+complete safe router result so a later session can restore every attempt and
+the original completion time if the final request-log update was interrupted.
 
 Write saved-response JSON in one deterministic format and hash the stored file
 bytes separately when adding it to the video material index. Never edit an
@@ -299,7 +308,8 @@ Each run contains:
 - `startedAt` and `endedAt`, with `endedAt` set to `null` while pending;
 - `runStatus`: `pending`, `succeeded`, `failed`, or `interrupted`;
 - safe `routingAttempts` returned by `gemini_request.py` for that run, with
-  each attempt carrying its applicable `cooldownUntil` when one exists;
+  `attemptNumber` starting at `1` and increasing without gaps, and with each
+  attempt carrying its applicable `cooldownUntil` when one exists;
 - `interruptionReason` when the user marks the run interrupted;
 - `retryAuthorization` on every run after the first, recording `authorizedAt`,
   its plain reason, and `usedAt`; and
@@ -430,8 +440,9 @@ For each video:
 11. Send one Gemini request at a time.
 12. For `video_material`, save the complete successful response after
     verifying that the router result and pending run have the same request ID,
-    run number, and exact request hash. Include the required format-check result
-    and finish the run with the saved-response reference.
+    run number, and exact request hash, and that the router's response hash
+    equals a fresh hash of the exact response-file bytes. Include the required
+    format-check result and finish the run with the saved-response reference.
 13. Add every eligible saved `video_material` response to the index after the
     applicable structured check or free-form review.
 14. For either one-time class, write no response file, finish the run with
@@ -610,9 +621,20 @@ authorization cannot start two runs.
 
 Preserve each safe primary, fallback, and bounded transient attempt returned
 by the router inside the run that made it. Bind the router's result to both
-`requestId` and `runNumber`. Validate timestamp order, HTTP status,
-classification, selected credential alias, and final routing status before
-saving them. Never store credential values or fingerprints.
+`requestId` and `runNumber`. A successful router result also contains the
+exact request hash and `responseSha256`. Validate attempt numbers, timestamp
+order, HTTP status, classification, selected credential alias, final routing
+status, and response hash before saving them. Never store credential values or
+fingerprints.
+
+The safe router result contains the complete ordered attempt list for the run,
+not merely attempts missing from the request log. When `finish-run` or an
+interrupted-completion operation encounters attempts already stored on the
+pending run, those stored attempts must equal the same-length prefix of the
+router result in attempt number and every safe field. Append only the missing
+suffix. An equal full list is an idempotent no-op. A mismatch, gap, duplicate,
+reordering, stored list longer than the router result, or terminal attempt that
+is not the router result's final attempt stops without changing the run.
 
 ## Interrupted runs
 
@@ -627,7 +649,8 @@ When a later session encounters such a run:
 1. stop before calling Gemini;
 2. for `video_material`, search that video's saved-response files for the exact
    request ID, run number, and exact request hash, then verify every candidate's
-   response hash, stored-file hash, and immutable request metadata;
+   router-declared response hash against the embedded exact response bytes,
+   stored-file hash, and immutable request metadata;
 3. for either one-time class, perform no response-file search because the
    storage policy creates no such file;
 4. show the user the video, requested time range, start time, request ID, run
@@ -654,7 +677,9 @@ processing.
 When a later session finishes a run from an exact saved response, set
 `endedAt` from the bound successful router attempt. Do not use the later repair
 time as the run's completion time; the request log's `updatedAt` records when
-the later Drive update occurred.
+the later Drive update occurred. Reconcile any attempts already stored on the
+pending run with the retained complete router history using the exact-prefix
+rule above; never replace or duplicate them.
 
 The normal write orders are:
 
@@ -762,6 +787,9 @@ approved.
 - the exact request-file hash is stored and verified separately for each run;
 - `endedAt` is `null` while pending and present when the run becomes terminal;
 - router attempts are bound to the correct request ID and run number;
+- successful router results contain a response SHA-256 that the response saver
+  independently recomputes from the exact response-file bytes;
+- a correct run binding paired with different response bytes is rejected;
 - credential failover and bounded transient retries remain attempts inside one
   run;
 - terminal runs are immutable, and appending another run preserves every
@@ -773,6 +801,9 @@ approved.
   exact request hash;
 - each saved response retains the validated safe router result needed to
   restore every routing attempt and the original run completion time;
+- existing pending-run attempts must be an exact prefix of retained router
+  history; only the missing suffix is appended, and conflicting, reordered,
+  duplicated, gapped, or extra attempts are rejected;
 - a pending run with one exact verified response can be finished after the
   user confirms the earlier session has stopped, without another network call;
 - an unlinked response cannot finish a pending run, and multiple claimants or

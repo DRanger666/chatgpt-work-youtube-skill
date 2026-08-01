@@ -129,12 +129,14 @@ reusable material shows the nesting:
           "runStatus": "failed",
           "routingAttempts": [
             {
+              "attemptNumber": 1,
               "bucket": "primary",
               "httpStatus": 429,
               "classification": "rate_limited",
               "cooldownUntil": "..."
             },
             {
+              "attemptNumber": 2,
               "bucket": "fallback",
               "httpStatus": 429,
               "classification": "rate_limited",
@@ -155,6 +157,7 @@ reusable material shows the nesting:
           },
           "routingAttempts": [
             {
+              "attemptNumber": 1,
               "bucket": "primary",
               "httpStatus": 200,
               "classification": "success"
@@ -177,13 +180,21 @@ summary. Never include a key, authorization header, key fragment, or key
 fingerprint.
 
 On `video_material` success, bind the router result to the request ID, run
-number, and exact request hash. The response-saving command verifies that
-binding and writes it and the complete safe router result into the saved
-response before the request log is finished. If that final log update is
-interrupted, a later session verifies the exact run-linked response, obtains
-confirmation that the earlier session has stopped, restores every routing
-attempt and the original terminal attempt time, and finishes the same run
-without routing another Gemini call.
+number, exact request hash, and exact response-file bytes. `gemini_request.py`
+hashes the response file it writes and includes `responseSha256` in the
+successful safe router result. The response-saving command independently
+rehashes the same file and requires equality before writing the run binding,
+response text, and complete safe router result into the saved response. If the
+final log update is interrupted, a later session verifies the exact run-linked
+response, obtains confirmation that the earlier session has stopped, restores
+every routing attempt and the original terminal attempt time, and finishes the
+same run without routing another Gemini call.
+
+Number routing attempts from `1` without gaps inside each run. A terminal
+router result contains the complete ordered attempt list. Attempts already
+stored on a pending run must equal the same-length prefix of that list; append
+only the missing suffix. Reject mismatches, gaps, duplicates, reordering,
+extra stored attempts, and a terminal attempt that is not last.
 
 On `task_specific_observation` or `direct_answer` success, return the response
 to the active conversation, write no response file, and finish the run with
@@ -214,9 +225,10 @@ Use deterministic local HTTP fixtures before live use:
 - invalid primary credential followed by fallback success;
 - cooldown persistence without secret material;
 - request-log retry authorization, monotonic run numbering, router-result
-  binding to the correct run, saved-response back-link verification,
-  interrupted-write completion without another network call, and preservation
-  of every earlier run;
+  binding to the correct run and exact response bytes, saved-response back-link
+  verification, exact-prefix attempt reconciliation, interrupted-write
+  completion without another network call, and preservation of every earlier
+  run;
 - controlled reusable output-type acceptance and arbitrary-category rejection;
   and
 - required deliberate-non-storage markers with no response files for both
