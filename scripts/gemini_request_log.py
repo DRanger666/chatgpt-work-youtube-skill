@@ -5,6 +5,7 @@ import copy
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 import youtube_work_common as common
 
@@ -71,7 +72,10 @@ ROUTER_RESULT_REQUIRED_FIELDS = {
 }
 ROUTER_RESULT_OPTIONAL_FIELDS = {"earliestCooldownUntil", "responseSha256"}
 TRANSIENT_HTTP_STATUSES = {0, 408, 500, 502, 503, 504}
-MODEL_ENDPOINT_PATTERN = re.compile(r"/models/([^/:]+):")
+GEMINI_ENDPOINT_HOST = "generativelanguage.googleapis.com"
+MODEL_ENDPOINT_PATH_PATTERN = re.compile(
+    r"^/v1beta/models/([^/:]+):generateContent$"
+)
 
 
 class RequestLogError(common.YouTubeWorkError):
@@ -211,6 +215,60 @@ def _validate_non_empty_string(value, label):
         raise RequestLogError(f"{label} must be a non-empty string")
 
 
+def _require_nondecreasing_update(previous, current):
+    if common.parse_timestamp(current, "new request-log updatedAt") < common.parse_timestamp(
+        previous, "previous request-log updatedAt"
+    ):
+        raise RequestLogError("Request-log updatedAt cannot move backwards")
+
+
+def validate_gemini_endpoint(endpoint, model):
+    _validate_non_empty_string(endpoint, "endpoint")
+    _validate_non_empty_string(model, "model")
+    parsed = urlparse(endpoint)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise RequestLogError("Unsupported Gemini Generate Content endpoint") from error
+    match = MODEL_ENDPOINT_PATH_PATTERN.fullmatch(parsed.path)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != GEMINI_ENDPOINT_HOST
+        or port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or match is None
+    ):
+        raise RequestLogError("Unsupported Gemini Generate Content endpoint")
+    if match.group(1) != model:
+        raise RequestLogError("Gemini endpoint and model differ")
+    return endpoint
+
+
+def validate_reusable_metadata(
+    output_type, timestamps_relative_to=None, language_policy=None
+):
+    if output_type == "transcript":
+        if timestamps_relative_to != common.TIMESTAMPS_FULL_VIDEO:
+            raise RequestLogError(
+                "Transcript material requires full-video timestamps"
+            )
+        if language_policy != {"sourceLanguage": "original"}:
+            raise RequestLogError(
+                "Transcript material requires original-language policy"
+            )
+    elif output_type == "translation":
+        policy = common.validate_language_policy(language_policy)
+        for field in ("sourceLanguage", "targetLanguage"):
+            if not isinstance(policy.get(field), str) or not policy[field].strip():
+                raise RequestLogError(
+                    f"Translation material requires {field}"
+                )
+
+
 def validate_attempt(attempt, expected_number=None, previous=None):
     common.require_exact_fields(
         attempt,
@@ -256,14 +314,20 @@ def validate_attempt(attempt, expected_number=None, previous=None):
     if classification == "success" and not 200 <= status < 300:
         raise RequestLogError("Successful routing attempt must have a 2xx status")
     if classification == "rate_limited" and not (
-        status == 429 or error_status == "RESOURCE_EXHAUSTED"
+        not 200 <= status < 300
+        and (status == 429 or error_status == "RESOURCE_EXHAUSTED")
     ):
         raise RequestLogError("Rate-limited attempt must report quota exhaustion")
     if classification == "transient" and status not in TRANSIENT_HTTP_STATUSES:
         raise RequestLogError("Transient attempt has an incompatible HTTP status")
     if classification == "credential_failure" and status not in {400, 401, 403}:
         raise RequestLogError("Credential failure has an incompatible HTTP status")
-    if classification == "request_failure" and (status < 400 or status == 429):
+    if classification == "request_failure" and (
+        status < 400
+        or status == 429
+        or status in TRANSIENT_HTTP_STATUSES
+        or status in {401, 403}
+    ):
         raise RequestLogError("Request failure has an incompatible HTTP status")
     if "cooldownUntil" in attempt:
         cooldown = common.parse_timestamp(attempt["cooldownUntil"], "attempt cooldownUntil")
@@ -276,6 +340,25 @@ def validate_attempt(attempt, expected_number=None, previous=None):
             or attempt[field] < 0
         ):
             raise RequestLogError(f"Routing {field} must be non-negative")
+    timing_fields = {
+        field
+        for field in ("retryDelaySeconds", "backoffSeconds", "cooldownUntil")
+        if field in attempt
+    }
+    if classification == "rate_limited":
+        if timing_fields != {"retryDelaySeconds", "cooldownUntil"}:
+            raise RequestLogError(
+                "Rate-limited attempt requires retry delay and cooldown"
+            )
+    elif classification == "transient":
+        if timing_fields not in ({"backoffSeconds"}, {"cooldownUntil"}):
+            raise RequestLogError(
+                "Transient attempt requires either backoff or cooldown"
+            )
+    elif timing_fields:
+        raise RequestLogError(
+            f"{classification} attempt cannot contain retry timing fields"
+        )
     return dict(attempt)
 
 
@@ -311,6 +394,11 @@ def validate_router_result(result):
                 previous=attempts[-1] if attempts else None,
             )
         )
+    if any(
+        attempt["classification"] in {"success", "request_failure"}
+        for attempt in attempts[:-1]
+    ):
+        raise RequestLogError("A terminal routing attempt must be final")
     completed = common.parse_timestamp(result["completedAt"], "router completedAt")
     if attempts:
         final_finished = common.parse_timestamp(
@@ -394,6 +482,10 @@ def validate_run(run, request, expected_number):
             )
         )
     run["routingAttempts"] = attempts
+    if attempts and common.parse_timestamp(
+        attempts[0]["startedAt"], "first attempt startedAt"
+    ) < started:
+        raise RequestLogError("Routing attempts cannot precede their run")
     if expected_number == 1 and "retryAuthorization" in run:
         raise RequestLogError("Run 1 cannot contain retry authorization")
     if expected_number > 1:
@@ -463,6 +555,7 @@ def validate_request_entry(request):
     )
     request["videoId"] = common.normalize_youtube_video_id(request["videoId"])
     common.validate_sha256(request["normalizedRequestSha256"], "normalized request hash")
+    validate_gemini_endpoint(request["endpoint"], request["model"])
     expected_id = derive_request_id(
         request["normalizedRequestSha256"],
         request["endpoint"],
@@ -495,6 +588,11 @@ def validate_request_entry(request):
             )
         if "languagePolicy" in request:
             common.validate_language_policy(request["languagePolicy"])
+        validate_reusable_metadata(
+            request["outputType"],
+            request.get("timestampsRelativeTo"),
+            request.get("languagePolicy"),
+        )
     else:
         forbidden = REQUEST_OPTIONAL_FIELDS & request.keys()
         if forbidden:
@@ -504,12 +602,29 @@ def validate_request_entry(request):
     if not isinstance(request["runs"], list) or not request["runs"]:
         raise RequestLogError("Logical request runs must be a non-empty array")
     pending_count = 0
+    previous_run = None
     for index, run in enumerate(request["runs"], start=1):
         validate_run(run, request, index)
+        if previous_run is not None:
+            if previous_run["runStatus"] == "pending":
+                raise RequestLogError("A pending run cannot have a later run")
+            previous_end = common.parse_timestamp(
+                previous_run["endedAt"], "previous run endedAt"
+            )
+            current_start = common.parse_timestamp(run["startedAt"], "run startedAt")
+            authorized = common.parse_timestamp(
+                run["retryAuthorization"]["authorizedAt"],
+                "authorization authorizedAt",
+            )
+            if current_start < previous_end or authorized < previous_end:
+                raise RequestLogError(
+                    "A later run and its authorization cannot precede the prior run"
+                )
         if run["runStatus"] == "pending":
             pending_count += 1
             if index != len(request["runs"]):
                 raise RequestLogError("Only the highest-numbered run may be pending")
+        previous_run = run
     if pending_count > 1:
         raise RequestLogError("A logical request may have at most one pending run")
     return request
@@ -520,7 +635,7 @@ def validate_request_log(log):
     if log["fileFormatVersion"] != common.FILE_FORMAT_VERSION:
         raise RequestLogError("Unsupported Gemini request-log format version")
     log["videoId"] = common.normalize_youtube_video_id(log["videoId"])
-    common.parse_timestamp(log["updatedAt"], "request log updatedAt")
+    updated_at = common.parse_timestamp(log["updatedAt"], "request log updatedAt")
     if not isinstance(log["requests"], list):
         raise RequestLogError("Gemini request log requests must be an array")
     request_ids = set()
@@ -535,6 +650,27 @@ def validate_request_log(log):
         pending_runs += sum(
             run["runStatus"] == "pending" for run in request["runs"]
         )
+        for run in request["runs"]:
+            event_times = [run["startedAt"]]
+            if run["endedAt"] is not None:
+                event_times.append(run["endedAt"])
+            if "retryAuthorization" in run:
+                event_times.extend(
+                    (
+                        run["retryAuthorization"]["authorizedAt"],
+                        run["retryAuthorization"]["usedAt"],
+                    )
+                )
+            event_times.extend(
+                attempt["finishedAt"] for attempt in run["routingAttempts"]
+            )
+            if any(
+                common.parse_timestamp(value, "request-log event time") > updated_at
+                for value in event_times
+            ):
+                raise RequestLogError(
+                    "Request-log updatedAt cannot precede recorded events"
+                )
     if pending_runs > 1:
         raise RequestLogError("One video request log may have at most one pending run")
     return log
@@ -574,8 +710,8 @@ def _build_request_entry(
     timestamps_relative_to=None,
     language_policy=None,
 ):
-    for value, label in ((endpoint, "endpoint"), (model, "model"), (method, "method")):
-        _validate_non_empty_string(value, label)
+    validate_gemini_endpoint(endpoint, model)
+    _validate_non_empty_string(method, "method")
     method = method.upper()
     if content_class not in common.CONTENT_CLASSES:
         raise RequestLogError(f"Unsupported content class: {content_class}")
@@ -603,6 +739,9 @@ def _build_request_entry(
             _validate_non_empty_string(timestamps_relative_to, "timestampsRelativeTo")
         if language_policy is not None:
             common.validate_language_policy(language_policy)
+        validate_reusable_metadata(
+            output_type, timestamps_relative_to, language_policy
+        )
     request_id = derive_request_id(
         inspection["normalizedRequestSha256"],
         endpoint,
@@ -725,6 +864,7 @@ def start_run(
                 )
     started_at = started_at or common.utc_now()
     common.parse_timestamp(started_at, "run startedAt")
+    _require_nondecreasing_update(log["updatedAt"], started_at)
     run_number = len(request["runs"]) + 1
     if run_number > 1:
         latest = request["runs"][-1]
@@ -774,6 +914,7 @@ def verify_pending_run(
     run_number,
 ):
     validate_request_log(log)
+    validate_gemini_endpoint(endpoint, model)
     request = find_request(log, request_id)
     run = find_run(request, run_number)
     if run is not request["runs"][-1] or run["runStatus"] != "pending":
@@ -803,9 +944,6 @@ def verify_pending_run(
             raise RequestLogError(f"Request-file verification failed for {field}")
     if run["exactRequestSha256"] != inspection["exactRequestSha256"]:
         raise RequestLogError("Request-file verification failed for exact bytes")
-    endpoint_model = MODEL_ENDPOINT_PATTERN.search(endpoint)
-    if endpoint_model and endpoint_model.group(1) != model:
-        raise RequestLogError("Gemini endpoint and model differ")
     return request, run
 
 
@@ -949,7 +1087,9 @@ def finish_run(
         run["savedResponseFileSha256"] = saved_file_hash
     elif run_status == "succeeded":
         run["responseNotSavedByPolicy"] = True
-    log["updatedAt"] = updated_at or common.utc_now()
+    next_updated_at = updated_at or common.utc_now()
+    _require_nondecreasing_update(log["updatedAt"], next_updated_at)
+    log["updatedAt"] = next_updated_at
     validate_request_log(log)
     original_log.clear()
     original_log.update(log)
@@ -980,6 +1120,7 @@ def mark_run_interrupted(
     run["runStatus"] = "interrupted"
     run["endedAt"] = at
     run["interruptionReason"] = reason.strip()
+    _require_nondecreasing_update(log["updatedAt"], at)
     log["updatedAt"] = at
     validate_request_log(log)
     original_log.clear()

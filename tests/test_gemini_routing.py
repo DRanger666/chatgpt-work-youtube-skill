@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -170,6 +171,20 @@ class GeminiRouterTests(unittest.TestCase):
         self.assertNotIn("responseSha256", result)
         gemini_request_log.validate_router_result(result)
 
+    def test_failed_result_uses_the_final_attempt_time(self):
+        start = datetime(2026, 8, 1, 10, 0, 1, tzinfo=timezone.utc)
+        times = [start + timedelta(seconds=index) for index in range(9)]
+        with mock.patch.object(gemini_request, "utc_now", side_effect=times):
+            exit_code, result, _ = self.run_router(
+                [
+                    response(429, "RESOURCE_EXHAUSTED", headers={"Retry-After": "60"}),
+                    response(429, "RESOURCE_EXHAUSTED", headers={"Retry-After": "90"}),
+                ]
+            )
+        self.assertEqual(exit_code, 3)
+        self.assertEqual(result["completedAt"], result["attempts"][-1]["finishedAt"])
+        gemini_request_log.validate_router_result(result)
+
     def test_transient_retry_remains_inside_one_numbered_run(self):
         exit_code, result, transport = self.run_router(
             [response(503, "UNAVAILABLE"), response(200)]
@@ -256,6 +271,26 @@ class GeminiRouterTests(unittest.TestCase):
         self.assertNotIn("fallback-secret", serialized)
         self.assertNotIn("x-goog-api-key", serialized)
         self.assertEqual(common.load_json(Path(self.args.state))["fileFormatVersion"], 1)
+
+    def test_pool_state_rejects_undeclared_fields_before_network(self):
+        state = {
+            "fileFormatVersion": 1,
+            "buckets": {
+                "primary": {
+                    **gemini_request.default_bucket_state(),
+                    "unexpected": "value",
+                },
+                "fallback": gemini_request.default_bucket_state(),
+            },
+        }
+        common.write_json(Path(self.args.state), state)
+        transport = FakeTransport([])
+        with mock.patch.dict(
+            os.environ, {"GEMINI_API_KEY": "secret"}, clear=True
+        ), mock.patch.object(gemini_request, "send_request", transport):
+            with self.assertRaises(SystemExit):
+                gemini_request.run(self.args)
+        self.assertEqual(transport.calls, [])
 
 
 if __name__ == "__main__":

@@ -224,6 +224,44 @@ class RequestLogTests(unittest.TestCase):
                 language_policy={"sourceLanguage": "original"},
                 started_at=T0,
             )
+
+    def test_reusable_metadata_is_complete_before_a_run_starts(self):
+        transcript_request = request_value(prompt=TRANSCRIPT_PROMPT)
+        transcript_request["generationConfig"]["responseJsonSchema"] = (
+            TRANSCRIPT_RESPONSE_SCHEMA
+        )
+        transcript_path = write_request(
+            self.directory / "metadata-transcript.json", transcript_request
+        )
+        with self.assertRaisesRegex(request_log.RequestLogError, "full-video"):
+            request_log.start_run(
+                self.new_log(),
+                transcript_path,
+                VIDEO_ID,
+                ENDPOINT,
+                MODEL,
+                "POST",
+                "video_material",
+                output_type="transcript",
+                output_format={"name": "gemini-transcript", "version": 1},
+                language_policy={"sourceLanguage": "original"},
+                started_at=T0,
+            )
+        with self.assertRaisesRegex(request_log.RequestLogError, "targetLanguage"):
+            request_log.start_run(
+                self.new_log(),
+                self.request_path,
+                VIDEO_ID,
+                ENDPOINT,
+                MODEL,
+                "POST",
+                "video_material",
+                output_type="translation",
+                output_format={"name": "gemini-free-form-text", "version": 1},
+                language_policy={"sourceLanguage": "hi"},
+                started_at=T0,
+            )
+
     def test_relabelling_same_request_is_rejected_without_creating_another_identity(self):
         log, request, run = self.start_one_time()
         request_log.mark_run_interrupted(
@@ -347,7 +385,9 @@ class RequestLogTests(unittest.TestCase):
         log, request, run = self.start_one_time()
         failed_attempt = attempt(classification="request_failure", http_status=400)
         result = router_result(request, run, attempts=[failed_attempt], status="failed")
-        request_log.finish_run(log, request["requestId"], 1, router_result=result)
+        request_log.finish_run(
+            log, request["requestId"], 1, router_result=result, updated_at=T1
+        )
         with self.assertRaises(request_log.TerminalRequestError):
             request_log.start_run(
                 log, self.request_path, VIDEO_ID, ENDPOINT, MODEL, "POST",
@@ -381,6 +421,7 @@ class RequestLogTests(unittest.TestCase):
             backoffSeconds=1.0,
         )
         run["routingAttempts"] = [retained]
+        log["updatedAt"] = T1
         second = attempt(
             number=2,
             started=T1,
@@ -411,6 +452,7 @@ class RequestLogTests(unittest.TestCase):
         conflicting = copy.deepcopy(retained)
         conflicting["bucket"] = "fallback"
         other_run["routingAttempts"] = [conflicting]
+        other_log["updatedAt"] = T1
         result["requestId"] = other_request["requestId"]
         result["exactRequestSha256"] = other_run["exactRequestSha256"]
         with self.assertRaisesRegex(request_log.RequestLogError, "exact prefix"):
@@ -482,6 +524,71 @@ class RequestLogTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(request_log.RequestLogError, "2xx"):
             request_log.validate_router_result(false_success)
+
+    def test_terminal_attempt_cannot_be_followed_by_another_attempt(self):
+        log, request, run = self.start_one_time()
+        terminal = attempt(
+            classification="request_failure",
+            http_status=400,
+            finished=T1,
+        )
+        later = attempt(
+            number=2,
+            classification="transient",
+            http_status=503,
+            started=T1,
+            finished=T2,
+            cooldownUntil="2026-08-01T10:05:00Z",
+        )
+        result = router_result(
+            request, run, attempts=[terminal, later], status="failed"
+        )
+        with self.assertRaisesRegex(request_log.RequestLogError, "must be final"):
+            request_log.validate_router_result(result)
+
+    def test_run_and_log_times_must_follow_recorded_history(self):
+        log, request, run = self.start_one_time()
+        self.finish_one_time(log, request, run)
+        before_prior_end = "2026-08-01T10:00:00Z"
+        with self.assertRaisesRegex(request_log.RequestLogError, "prior run"):
+            request_log.start_run(
+                log,
+                self.request_path,
+                VIDEO_ID,
+                ENDPOINT,
+                MODEL,
+                "POST",
+                "direct_answer",
+                retry_reason="User requested another run",
+                authorized_at=before_prior_end,
+                started_at="2026-08-01T10:10:00Z",
+            )
+        self.assertEqual(len(log["requests"][0]["runs"]), 1)
+
+        log["updatedAt"] = T0
+        with self.assertRaisesRegex(request_log.RequestLogError, "updatedAt"):
+            request_log.validate_request_log(log)
+
+    def test_untrusted_or_malformed_endpoint_is_rejected(self):
+        for endpoint in (
+            "https://example.com/v1beta/models/gemini-3.6-flash:generateContent",
+            "https://generativelanguage.googleapis.com:bad/v1beta/models/gemini-3.6-flash:generateContent",
+            ENDPOINT + "?redirect=true",
+        ):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaisesRegex(
+                    request_log.RequestLogError, "Unsupported Gemini"
+                ):
+                    request_log.start_run(
+                        self.new_log(),
+                        self.request_path,
+                        VIDEO_ID,
+                        endpoint,
+                        MODEL,
+                        "POST",
+                        "direct_answer",
+                        started_at=T0,
+                    )
 
     def test_serialized_log_contains_no_credentials_or_request_body_copy(self):
         log, _, _ = self.start_one_time()

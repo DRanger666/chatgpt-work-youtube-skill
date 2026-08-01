@@ -24,6 +24,9 @@ KEY_INVALID_MARKERS = (
     "api key is invalid",
     "invalid api key",
 )
+POOL_STATE_FIELDS = {"fileFormatVersion", "buckets"}
+BUCKET_STATE_FIELDS = {"cooldownUntil", "disabled", "reason"}
+BUCKET_STATE_REASONS = {None, "rate_limited", "transient_failures", "credential_failure"}
 
 
 def utc_now():
@@ -59,26 +62,67 @@ def default_bucket_state():
     return {"cooldownUntil": None, "disabled": False, "reason": None}
 
 
+def validate_state(state):
+    try:
+        common.require_exact_fields(
+            state, POOL_STATE_FIELDS, set(), "Gemini pool state"
+        )
+    except common.YouTubeWorkError as error:
+        raise SystemExit(str(error)) from error
+    if state["fileFormatVersion"] != common.FILE_FORMAT_VERSION:
+        raise SystemExit(
+            "Unsupported Gemini pool-state format: "
+            f"{state['fileFormatVersion']}"
+        )
+    if not isinstance(state["buckets"], dict) or set(state["buckets"]) != {
+        "primary",
+        "fallback",
+    }:
+        raise SystemExit("Gemini pool state must contain only primary and fallback")
+    for alias, bucket in state["buckets"].items():
+        try:
+            common.require_exact_fields(
+                bucket, BUCKET_STATE_FIELDS, set(), f"{alias} bucket state"
+            )
+        except common.YouTubeWorkError as error:
+            raise SystemExit(str(error)) from error
+        if not isinstance(bucket["disabled"], bool):
+            raise SystemExit(f"{alias} bucket disabled must be Boolean")
+        if bucket["reason"] not in BUCKET_STATE_REASONS:
+            raise SystemExit(f"{alias} bucket has an unsupported reason")
+        cooldown = bucket["cooldownUntil"]
+        if cooldown is not None:
+            try:
+                common.parse_timestamp(cooldown, f"{alias} cooldownUntil")
+            except common.YouTubeWorkError as error:
+                raise SystemExit(str(error)) from error
+        if bucket["disabled"]:
+            if cooldown is not None or bucket["reason"] != "credential_failure":
+                raise SystemExit(f"{alias} disabled state is inconsistent")
+        elif bucket["reason"] == "credential_failure":
+            raise SystemExit(f"{alias} credential failure must disable the bucket")
+        elif cooldown is None and bucket["reason"] is not None:
+            raise SystemExit(f"{alias} bucket reason requires a cooldown")
+        elif cooldown is not None and bucket["reason"] not in {
+            "rate_limited",
+            "transient_failures",
+        }:
+            raise SystemExit(f"{alias} cooldown reason is inconsistent")
+    return state
+
+
 def load_state(path):
     path = Path(path).resolve()
     if not path.exists():
-        return {
+        return validate_state({
             "fileFormatVersion": common.FILE_FORMAT_VERSION,
             "buckets": {
                 "primary": default_bucket_state(),
                 "fallback": default_bucket_state(),
             },
-        }
+        })
     state = load_json(path)
-    if state.get("fileFormatVersion") != common.FILE_FORMAT_VERSION:
-        raise SystemExit(
-            "Unsupported Gemini pool-state format: "
-            f"{state.get('fileFormatVersion')}"
-        )
-    buckets = state.setdefault("buckets", {})
-    for alias in ("primary", "fallback"):
-        buckets.setdefault(alias, default_bucket_state())
-    return state
+    return validate_state(state)
 
 
 def load_buckets():
@@ -314,7 +358,11 @@ def run(args):
         ]
         if not available:
             routing["status"] = "failed"
-            routing["completedAt"] = isoformat(now)
+            routing["completedAt"] = (
+                routing["attempts"][-1]["finishedAt"]
+                if routing["attempts"]
+                else isoformat(now)
+            )
             cooldown = earliest_cooldown(state)
             if cooldown is not None:
                 routing["earliestCooldownUntil"] = isoformat(cooldown)
@@ -328,6 +376,8 @@ def run(args):
                     }
                 }
             write_json(args.response, safe_failure_payload(last_http_status, last_payload))
+            validate_state(state)
+            gemini_request_log.validate_router_result(routing)
             write_json(args.router_result, routing)
             write_json(state_path, state)
             print(json.dumps({"status": "failed", "attempts": len(routing["attempts"])}))
@@ -370,6 +420,8 @@ def run(args):
                 routing["responseSha256"] = common.sha256_hex(
                     Path(args.response).resolve().read_bytes()
                 )
+                validate_state(state)
+                gemini_request_log.validate_router_result(routing)
                 write_json(args.router_result, routing)
                 write_json(state_path, state)
                 print(
@@ -424,6 +476,8 @@ def run(args):
             routing["status"] = "failed"
             routing["completedAt"] = attempt["finishedAt"]
             write_json(args.response, safe_failure_payload(http_status, payload))
+            validate_state(state)
+            gemini_request_log.validate_router_result(routing)
             write_json(args.router_result, routing)
             write_json(state_path, state)
             print(
