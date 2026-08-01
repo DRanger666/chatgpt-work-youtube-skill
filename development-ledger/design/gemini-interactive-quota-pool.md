@@ -102,12 +102,14 @@ database unless real cross-session evidence later justifies it.
 Keep request history in the per-video Gemini request log defined in
 [`youtube-saved-work.md`](youtube-saved-work.md). The log is separate from the
 video material index. Before routing, the request entry already contains the
-exact prompt and its predeclared `contentClass`, `outputType`, and
-`outputFormat`. The router verifies those values against the logical request
-and its pending run but never reclassifies them. Each deliberate execution is
-a numbered run, and each credential or network try is a routing attempt inside
-that run. Bind each router result to both `requestId` and `runNumber`. This
-abridged example shows the nesting:
+exact prompt and its predeclared `contentClass`. A `video_material` entry also
+contains one controlled `outputType` and compatible `outputFormat`; the two
+one-time classes contain neither. The router verifies those values and their
+required presence or absence against the logical request and its pending run
+but never reclassifies them. Each deliberate execution is a numbered run, and
+each credential or network try is a routing attempt inside that run. Bind each
+router result to both `requestId` and `runNumber`. This abridged example for
+reusable material shows the nesting:
 
 ```json
 {
@@ -115,6 +117,9 @@ abridged example shows the nesting:
   "requests": [
     {
       "requestId": "...",
+      "contentClass": "video_material",
+      "outputType": "transcript",
+      "outputFormat": {"name": "gemini-transcript", "version": 1},
       "runs": [
         {
           "runNumber": 1,
@@ -165,25 +170,31 @@ abridged example shows the nesting:
 }
 ```
 
-An identical failed request may run again only by appending a new run with a
+An identical failed request runs again only by appending a new run with a
 documented authorization. Preserve every earlier run and its attempts. Do not
 persist a separate request-level status, authorization, cooldown, or response
 summary. Never include a key, authorization header, key fragment, or key
 fingerprint.
 
-On success, bind the router result to the request ID, run number, and exact
-request hash. The response-saving command verifies that binding and writes it
-and the complete safe router result into the saved response before the request
-log is finished. If that final log update is interrupted, a later session
-verifies the exact run-linked response, obtains confirmation that the earlier
-session has stopped, restores every routing attempt and the original terminal
-attempt time, and finishes the same run without routing another Gemini call.
+On `video_material` success, bind the router result to the request ID, run
+number, and exact request hash. The response-saving command verifies that
+binding and writes it and the complete safe router result into the saved
+response before the request log is finished. If that final log update is
+interrupted, a later session verifies the exact run-linked response, obtains
+confirmation that the earlier session has stopped, restores every routing
+attempt and the original terminal attempt time, and finishes the same run
+without routing another Gemini call.
+
+On `task_specific_observation` or `direct_answer` success, return the response
+to the active conversation, write no response file, and finish the run with
+`responseNotSavedByPolicy: true`. The router and request log reject a saved-
+response reference on either one-time class.
 
 ## Error policy
 
 | Response | Classification | Action |
 |---|---|---|
-| `2xx` | Success | Return and save the response; finish the run |
+| `2xx` | Success | For `video_material`, save and link the response; for either one-time class, return it without Drive response storage and record `responseNotSavedByPolicy: true` |
 | `429 RESOURCE_EXHAUSTED` | Project rate limit | Cool down bucket; try other healthy bucket |
 | `408`, `500`, `502`, `503`, `504` | Transient | Bounded backoff with jitter; then fail over |
 | `401` or credential-specific `403` | Credential failure | Disable bucket for run; try other bucket |
@@ -205,7 +216,11 @@ Use deterministic local HTTP fixtures before live use:
 - request-log retry authorization, monotonic run numbering, router-result
   binding to the correct run, saved-response back-link verification,
   interrupted-write completion without another network call, and preservation
-  of every earlier run.
+  of every earlier run;
+- controlled reusable output-type acceptance and arbitrary-category rejection;
+  and
+- required deliberate-non-storage markers with no response files for both
+  one-time classes.
 
 After offline tests pass, make one inexpensive validation request per
 credential. Do not stress-test quota or deliberately provoke throttling.

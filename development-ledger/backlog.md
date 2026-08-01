@@ -89,10 +89,18 @@ three reopened items below are governed by
         wrapper.
   - [ ] Plan from `<videoId>--video-material-index.json`, then download and
         verify only the selected saved-response files.
+  - [ ] Accept only `transcript`, `translation`, `summary`,
+        `systematic_visual_description`, and `systematic_onscreen_text` as
+        initial reusable output types. Reject arbitrary categories.
+  - [ ] Search explicit index fields in that order: controlled output type,
+        output-format version, language, timestamp policy, and covered time.
+        Use `savedResponseId` only after selection to retrieve and verify the
+        chosen file.
   - [ ] Derive transcript covered time mechanically from the checked Gemini
         response and its actual requested clip. Never accept it from a caller.
   - [ ] Exclude `task_specific_observation` and `direct_answer` responses from
-        ordinary material search, regardless of prompt similarity.
+        Drive response storage and ordinary material search, regardless of
+        prompt similarity.
   - [ ] When reusable material leaves a visual-sensory gap, request a narrowly
         scoped `task_specific_observation` and let ChatGPT reason over it.
   - [ ] Return only missing time ranges for new request construction.
@@ -109,8 +117,9 @@ three reopened items below are governed by
   while the earlier replacement used generic file names and split information
   in a way that made its promised index rebuilding unreliable.
 - Goal: Keep one predictable per-video material index and separate,
-  never-edited saved-response files. Every successful response is preserved,
-  while only predeclared `video_material` may enter ordinary search.
+  never-edited saved-response files. Every successful `video_material`
+  response is preserved; every eligible one is indexed after its required
+  validation or review. The two one-time classes write no response files.
 - Evidence retained from the earlier implementation:
   - Per-video lookup, separate output files, file-integrity checking, and index
     rebuilding worked offline under the earlier names.
@@ -124,16 +133,16 @@ three reopened items below are governed by
 - Required release work:
   - [ ] Use the `YouTubeVideoWork` Drive folder,
         `<videoId>--video-material-index.json`, and
-        `<videoId>--gemini-response--<savedResponseId>.json`.
+        `<videoId>--gemini-response--<outputType>--<savedResponseId>.json`.
   - [ ] Use file-format field names defined in `youtube-saved-work.md`; remove
         the old artifact, manifest, contract, and valid-coverage field names.
   - [ ] Keep request status, attempts, cooldowns, retry reasons, and session
         information out of the video material index. Keep the saved response's
         verified request ID, run number, and exact request hash out of material
         search fields while retaining them in the saved file and its identity.
-  - [ ] Save every successful Gemini response in full, including a malformed
-        structured response and every task-specific observation or direct
-        answer.
+  - [ ] Save every successful `video_material` response in full, including a
+        malformed structured response. Never write a saved-response file for
+        a task-specific observation or direct answer.
   - [ ] Copy the requested source time range into each saved response and its
         content metadata. Calculate saved-response identity from every
         immutable saved field, including video ID, request ID, run number,
@@ -147,6 +156,13 @@ three reopened items below are governed by
         check status.
   - [ ] Add only `video_material` to the index. A malformed transcript must
         contribute no covered time even though its response remains saved.
+  - [ ] Identify index entries only by `savedResponseId`. Append every new ID
+        without replacing entries that share an interval, overlap, or use the
+        same output type; treat an identical existing ID as a verified
+        idempotent no-op.
+  - [ ] Keep transcript, translation, summary, systematic visual description,
+        and systematic onscreen text entries together when they describe the
+        same source interval.
   - [ ] Rebuild a missing index from saved responses whose predeclared class is
         `video_material`. Do not create an empty index until response
         enumeration confirms that no qualifying file can be admitted.
@@ -188,30 +204,33 @@ three reopened items below are governed by
         record authorization and append the pending run in the same update.
   - [ ] Build each logical request entry by reading the actual request file.
         Store its exact prompt, normalized-request hash, video ID, clip,
-        endpoint, model, method, predeclared `contentClass`, `outputType`, and
-        `outputFormat` as immutable request-level fields.
+        endpoint, model, method, and predeclared `contentClass` as immutable
+        request-level fields. Require controlled `outputType` and compatible
+        `outputFormat` only for `video_material`; forbid both fields for the
+        two one-time classes.
   - [ ] Store an ordered `runs` list under that request. Start `runNumber` at
         `1`, increment without gaps, and keep exact request-file hash, times,
-        status, routing attempts, cooldown, authorization, and successful
-        response reference inside the corresponding run.
+        status, routing attempts, cooldown, authorization, and the applicable
+        successful outcome fields inside the corresponding run.
   - [ ] Permit at most one pending run per request, require it to be the
         highest-numbered run, and forbid appending another run before it is
         terminal.
   - [ ] Remove separately writable request-level status, authorization,
         cooldown, and saved-response fields. Calculate current status from the
-        highest-numbered run and enumerate all successful runs when retrieving
-        responses.
+        highest-numbered run and enumerate each successful run's saved-response
+        reference or deliberate-non-storage marker when retrieving results.
   - [ ] Make `gemini_request.py` verify the immutable request information,
         exact hash, request ID, run number, and highest pending run before
         loading a credential.
-  - [ ] Bind content class, output type, and output format immutably to the
-        logical request entry without adding local classification to request
-        identity.
-        Reject conflicting metadata for an existing request ID and reject a
-        caller's attempt to replace it after the call.
+  - [ ] Bind content class and the applicable reusable output fields immutably
+        to the logical request entry without adding local classification to
+        request identity. Reject conflicting metadata for an existing request
+        ID and reject a caller's attempt to replace it after the call.
   - [ ] Let a purpose-specific builder fix an unambiguous class, including
         `video_material` for transcript mode. Require the generic prompt route
-        to declare its class explicitly; do not supply a silent default.
+        to declare its class explicitly; do not supply a silent default. For
+        `video_material`, require one controlled reusable output type and its
+        compatible format.
   - [ ] Use `fileFormatVersion` and the plain request-log field names in the
         request log, routing metadata, and local bucket-state file; update the
         operational documents and tests in the same implementation commit.
@@ -222,11 +241,10 @@ three reopened items below are governed by
         Every later deliberate execution must append another run with one new,
         consumed user authorization; never overwrite an earlier run.
   - [ ] Enforce saved cooldowns and reject unchanged terminal request errors.
-  - [ ] Require a saved-response reference before marking any successful
-        run `succeeded`, including a failed-format response,
-        task-specific observation, or direct answer. Retain its Drive file ID
-        and file SHA-256 so non-indexed responses remain directly retrievable
-        and verifiable.
+  - [ ] Require a complete saved-response reference before marking a
+        `video_material` run `succeeded`, including a failed-format response.
+        For a successful task-specific observation or direct answer, require
+        `responseNotSavedByPolicy: true` and forbid saved-response fields.
   - [ ] Require the response-saving command to verify the router result's
         request ID, run number, and exact request hash against the pending run,
         then write that binding and the complete safe router result into the
@@ -252,11 +270,12 @@ three reopened items below are governed by
         explicit retry reasons, cooldowns, interrupted-run decisions,
         routing consistency, immutable pre-call classification, relabelling
         that cannot bypass duplicate prevention, exact prompt retention,
-        monotonic run numbering, multiple successful response references,
-        saved-response back-links, interrupted-write completion without a new
-        network call, unlinked and conflicting response rejection, append-only
-        terminal history, derived current status, and absence of credentials
-        in saved files.
+        controlled output-type rejection, deliberate non-storage markers,
+        monotonic run numbering, multiple successful reusable response
+        references, saved-response back-links, interrupted-write completion
+        without a new network call, unlinked and conflicting response
+        rejection, append-only terminal history, derived current status, and
+        absence of credentials in saved files.
 - Related documents:
   - [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
   - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)

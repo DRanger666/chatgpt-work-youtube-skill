@@ -6,6 +6,7 @@
 - [Purpose](#purpose)
 - [Names the release must actually use](#names-the-release-must-actually-use)
 - [Files kept on Google Drive](#files-kept-on-google-drive)
+- [Controlled reusable output types](#controlled-reusable-output-types)
 - [Classify each Gemini request before sending it](#classify-each-gemini-request-before-sending-it)
 - [Use Gemini as a video sensor](#use-gemini-as-a-video-sensor)
 - [Normal workflow](#normal-workflow)
@@ -45,9 +46,9 @@ It must support these ordinary situations:
    range.
 3. Process only missing time ranges.
 4. Continue after Gemini returns an incomplete transcript.
-5. Save every successful Gemini response during the normal workflow, including
-   narrowly task-specific observations and direct answers that must not enter
-   ordinary material search.
+5. Save every successful reusable-video-material response. Return
+   task-specific observations and direct answers to the active conversation
+   without writing their response text to Drive.
 6. Avoid automatically repeating a request whose latest run is already known
    to be pending, successful, failed, or interrupted.
 7. Rebuild a missing per-video material index by inspecting saved-response
@@ -67,7 +68,7 @@ as public aliases or compatibility wrappers.
 |---|---|
 | Private Drive folder | `YouTubeVideoWork` |
 | Per-video list of reusable source material | Video material index |
-| One complete successful Gemini response plus its classification | Saved Gemini response |
+| One complete successful reusable-material response plus its run binding | Saved Gemini response |
 | Per-video history of Gemini requests | Gemini request log |
 | One deliberate execution of a logical request | Authorized run |
 | One HTTP try made through a particular credential | Routing attempt |
@@ -77,7 +78,7 @@ as public aliases or compatibility wrappers.
 | Script for saving responses and finding reusable material | `scripts/saved_gemini_responses.py` |
 | Script for request history and retry decisions | `scripts/gemini_request_log.py` |
 | Material-index filename | `<videoId>--video-material-index.json` |
-| Saved-response filename | `<videoId>--gemini-response--<savedResponseId>.json` |
+| Saved-response filename | `<videoId>--gemini-response--<outputType>--<savedResponseId>.json` |
 | Request-log filename | `<videoId>--gemini-requests.json` |
 
 The implementation must remove or replace these public names:
@@ -102,8 +103,8 @@ equivalent to: `init-log`, `start-run`, `verify-run`, `finish-run`, and
 authorized run; it does not replace the request entry. For every run after the
 first, `start-run` must record the user's authorization and append the pending
 run in the same update. Do not create a separate request-level authorization
-slot. The worker may combine commands when that removes duplicated input or an
-unsafe intermediate step, but it must not restore the old terminology.
+slot. The worker combines commands only when doing so removes duplicated input
+or an unsafe intermediate step; it does not restore the old terminology.
 
 ## Files kept on Google Drive
 
@@ -113,21 +114,23 @@ different question.
 For each normalized video ID, keep exactly one video material index, exactly
 one Gemini request log, and zero or more saved Gemini response files. These are
 three file types for one video, not a fixed three-file tuple: each successful
-Gemini call can add another saved response.
+`video_material` call adds another saved response. Task-specific observations
+and direct answers add no saved-response file.
 
-Do not split one Gemini success into a separate raw-result file and a separate
-reusable-material file. The saved Gemini response below preserves the exact
-response text together with the content classification declared before the
-request. The material index points to selected response files instead of
-copying their contents.
+Do not split one reusable-material success into a separate raw-result file and
+a separate reusable-material file. The saved Gemini response below preserves
+the exact response text together with the content classification declared
+before the request. The material index points to eligible response files
+instead of copying their contents.
 
 ### Saved Gemini response
 
 Question answered: **What exactly did Gemini return?**
 
-Create one self-contained JSON file for every successful Gemini response in
-the normal workflow. Build it by reading the actual request and response
-files and the matching pending request-log run. It contains:
+Create one self-contained JSON file for every successful `video_material`
+response. Never create this file for `task_specific_observation` or
+`direct_answer`. Build it by reading the actual request and response files and
+the matching pending request-log run. It contains:
 
 - `fileFormatVersion`;
 - normalized `videoId`;
@@ -156,10 +159,12 @@ record, and any change to its run binding, classified content metadata, format
 check, safe router result, or returned content changes the ID. Two authorized
 runs have different saved-response IDs even when Gemini returns identical
 bytes; `responseSha256` still reveals that their returned content is
-identical.
+identical. Because controlled `outputType` and `outputFormat` are included in
+the immutable saved fields, a transcript, translation, and summary for the
+same video range always receive different saved-response IDs.
 
-The response-saving command must accept the router result produced by
-`gemini_request.py` and verify that its request ID, run number, and exact
+The response-saving command accepts the router result produced by
+`gemini_request.py` and verifies that its request ID, run number, and exact
 request hash match the pending run before writing the file. It must copy the
 content class, output type, output format, and source range from the immutable
 logical request entry rather than accepting replacements from the caller. A
@@ -173,6 +178,11 @@ bytes separately when adding it to the video material index. Never edit an
 existing saved-response file. If a checker changes what a structured response
 means, introduce a new output-format version rather than reinterpreting the old
 file.
+
+Name the file
+`<videoId>--gemini-response--<outputType>--<savedResponseId>.json` using the
+verified controlled output type. The saved-response ID, not the readable type
+segment, remains the file's unique record key.
 
 There is no global `reusable` field and no `unusableReason`. Reuse is a
 relationship between a response and a later need, not an intrinsic truth about
@@ -189,6 +199,27 @@ index.
 The file contains no API key, authorization header, credential fragment,
 credential fingerprint, or routing-bucket secret.
 
+### Controlled reusable output types
+
+Every saved Gemini response and every video-material-index entry uses exactly
+one `outputType` from this initial list:
+
+| `outputType` | Reusable content |
+|---|---|
+| `transcript` | Spoken words in the source language, with the declared timestamp policy |
+| `translation` | A translation of spoken or written video content, with explicit source and target languages |
+| `summary` | A reusable condensed account of the declared video range |
+| `systematic_visual_description` | A chronological, reusable record of visible scenes, objects, and actions |
+| `systematic_onscreen_text` | Reusable extraction of text shown on slides, boards, charts, captions, or other visible surfaces |
+
+`outputType` is not an arbitrary caller-supplied category. A new reusable
+output type enters this list only through a design update that defines its
+meaning, required language and timestamp fields, compatible output formats,
+search behavior, deterministic checker when structured, and offline tests.
+
+The filename includes the controlled output type for human inspection. Code
+reads and verifies the saved JSON instead of trusting filename text.
+
 ### Video material index
 
 Question answered: **Which saved responses contain reusable source material
@@ -197,12 +228,12 @@ for this video?**
 Use one predictable material-index file per normalized YouTube video ID. Its
 top-level fields are `fileFormatVersion`, `videoId`, `materials`, and
 `updatedAt`. Every entry represents a saved response whose predeclared
-`contentClass` is `video_material`. Each entry contains only information needed
-to find and reuse that material:
+`contentClass` is `video_material`. Every eligible saved response has its own
+entry. Each entry contains only information needed to find and reuse that
+material:
 
 - `savedResponseId`, `driveFileId`, `fileName`, and `fileSha256`;
-- `outputType`, such as transcript, translation, summary, visual description,
-  or systematic slide text;
+- one controlled `outputType` from the list above;
 - `outputFormat`, containing its name and version;
 - `timestampsRelativeTo` and `languagePolicy` when applicable;
 - verified `coveredTimeRanges`; and
@@ -212,6 +243,20 @@ to find and reuse that material:
 The material index does not contain prompts, task-specific observations,
 direct answers, Gemini request status, request hashes, network attempts,
 cooldowns, retry reasons, session IDs, or interruption history.
+
+Index entries are identified by `savedResponseId`, never by video interval or
+covered time. Adding a new saved-response ID appends its entry and preserves
+every existing different ID, including entries with the same interval,
+overlapping coverage, or another output type. Adding an existing ID verifies
+that the stored entry and saved file are identical and then performs an
+idempotent no-op. A matching interval, overlapping interval, or matching
+output type never authorizes replacement or removal.
+
+Search does not use `savedResponseId` as a semantic key. It opens the
+predictable per-video index, filters entries by controlled output type, then
+applies output-format version, language, timestamp policy, and covered-time
+requirements. Only after selection does it use `savedResponseId`, Drive file
+ID, and file hash to fetch and verify the exact saved response.
 
 For a structured output, its required deterministic format check must pass
 before admission. For a free-form `video_material` response, ChatGPT must read
@@ -241,7 +286,8 @@ Logical request
 - normalized `videoId` and `requestedTimeRange`;
 - the predeclared `contentClass`;
 - `promptText`, copied exactly from the actual request file;
-- `outputType` and `outputFormat`;
+- the controlled `outputType` and `outputFormat` when `contentClass` is
+  `video_material`; both fields are absent for the two one-time classes;
 - `endpoint`, `model`, and `requestMethod`;
 - `normalizedRequestSha256` for normalized request JSON;
 - `runs`, an ordered list of authorized runs.
@@ -258,25 +304,28 @@ Each run contains:
 - `retryAuthorization` on every run after the first, recording `authorizedAt`,
   its plain reason, and `usedAt`; and
 - `savedResponseId`, `savedResponseDriveFileId`, and
-  `savedResponseFileSha256` when that run succeeds, absent from other statuses.
+  `savedResponseFileSha256` when a `video_material` run succeeds;
+- `responseNotSavedByPolicy: true` when a `task_specific_observation` or
+  `direct_answer` run succeeds; and
+- none of those success fields for `pending`, `failed`, or `interrupted`.
 
 Create the request entry and run `1` together. Every later deliberate execution
 appends run `N + 1` with a new consumed authorization. Credential fallback and
 bounded transient retries performed by the router remain routing attempts
 inside one run; they do not increment `runNumber`.
 
-A request may have at most one pending run, and it must be the
-highest-numbered run. Do not append another run until that run is terminal.
-Only that pending run may receive new routing attempts and then transition to
-one terminal status. Once terminal, a run is never rewritten or removed.
+A request has at most one pending run, and it is the highest-numbered run. Do
+not append another run until that run is terminal. Only that pending run
+receives new routing attempts and then transitions to one terminal status.
+Once terminal, a run is never rewritten or removed.
 Previous runs, authorizations, attempts, cooldown evidence, and response
-references remain distinguishable.
+references or deliberate-non-storage markers remain distinguishable.
 
 Do not store a separately writable request-level status, cooldown,
 authorization, or saved-response reference. Calculate the current status from
 the highest-numbered run, and enumerate all successful runs when retrieving
-earlier responses. A later pending, failed, or interrupted run never hides or
-erases an earlier successful response.
+earlier results. A later pending, failed, or interrupted run never hides or
+erases an earlier saved-response reference or deliberate-non-storage marker.
 
 The exact prompt is retained so a later Work session can understand what the
 request asked Gemini to observe or answer. The request log supports duplicate
@@ -284,46 +333,52 @@ prevention and resuming the same known request. It is not a semantic search
 index for future tasks and does not answer whether a response is reusable video
 material. That decision belongs to the video material index.
 
-The relationship is deliberately recorded in both directions: a successful
-run contains the saved-response reference, and the saved response contains the
-verified request ID, run number, and exact request hash. This does not put
-request history in the video material index.
+For `video_material`, the relationship is recorded in both directions: the
+successful run contains the saved-response reference, and the saved response
+contains the verified request ID, run number, and exact request hash. For either
+one-time class, the successful run contains only the required
+`responseNotSavedByPolicy: true` marker. Neither form puts request history in
+the video material index.
 
 ## Classify each Gemini request before sending it
 
 Every Gemini request must declare exactly one `contentClass` before request
 construction and before any network call:
 
-| `contentClass` | Intended content | Material-index rule |
+| `contentClass` | Intended content | Required storage behavior |
 |---|---|---|
-| `video_material` | Broadly reusable transcript, translation, summary, description, systematic visual record, or systematic OCR | May enter after the required format check or one free-form content review |
-| `task_specific_observation` | Narrow sensory evidence requested for the current ChatGPT task, such as text on one board, values in one chart, or actions in one short scene | Never enters ordinary material search |
-| `direct_answer` | Gemini's own reasoning or answer to a question | Never enters ordinary material search; use only deliberately |
+| `video_material` | One controlled reusable output type | Save the complete run-linked response; add every eligible response to the material index |
+| `task_specific_observation` | Narrow sensory evidence requested for the active ChatGPT task, such as text on one board, values in one chart, or actions in one short scene | Return it to the active conversation; write no response file and no material-index entry |
+| `direct_answer` | Gemini's own reasoning or answer to a question | Return it to the active conversation; write no response file and no material-index entry |
 
 The class describes why the request is being made, not whether the returned
 text later looks impressive. Bind it into the logical request entry before its
 first run, but do not make this local classification part of request identity.
-The response-saving command must copy it from that entry and must not accept a
-replacement class from the caller. Do not silently promote a task-specific
-observation or direct answer into `video_material` after seeing the response.
+For `video_material`, the response-saving command copies it from that entry and
+does not accept a replacement class from the caller. Never promote a
+task-specific observation or direct answer into `video_material` after seeing
+the response.
 
-A purpose-specific builder may fix a class when there is no ambiguity; the
-transcript builder fixes `video_material`. A generic prompt builder must require
-an explicit class and must not silently default to `video_material` or
-`direct_answer`. Apply the same rule to `outputType` and `outputFormat` whenever
-the builder cannot derive them from a named mode.
+A purpose-specific builder fixes the class when the mode determines it; the
+transcript builder fixes `video_material`. A generic prompt builder requires an
+explicit class and never defaults to `video_material` or `direct_answer`.
+Every `video_material` request also supplies one controlled `outputType` and
+one compatible `outputFormat`; a named builder supplies them, otherwise the
+caller supplies them explicitly. The two one-time classes contain neither
+field in the request log and never create arbitrary output categories.
 
-Preserve the exact successful response for all three classes and link it from
-the request log. Only `video_material` may be added to the material index.
-Task-specific observations and direct answers remain available through the
-known request that produced them, which is sufficient for the current task and
-for preventing an identical repeat without bloating later material searches.
-This preservation is required: a run must not be marked `succeeded` and thereby
-block repetition while its returned content is unavailable to a fresh Work VM.
+Preserve and link the exact successful response only for `video_material`.
+For either one-time class, return the response to the active conversation and
+finish the run with `responseNotSavedByPolicy: true`; the response text is not
+written to Drive. That required marker distinguishes deliberate non-storage
+from a missing saved-response write. A later identical request reports the
+earlier success and deliberate non-storage, then requires a new explicit
+authorization before another run.
 
-Do not add a separate task index, automatic semantic promotion, retention
-policy, or cleanup subsystem in this release. Saved JSON responses are small;
-introduce cleanup only after observed storage pressure establishes a real need.
+Do not add a task index, automatic semantic promotion, retention policy, or
+cleanup subsystem in this release. To retain a sensory record for future use,
+classify the request as `video_material` before sending it and use
+`systematic_visual_description` or `systematic_onscreen_text`.
 
 ## Use Gemini as a video sensor
 
@@ -350,8 +405,8 @@ it a `direct_answer`.
 
 Scope determines the class. Systematically reading every slide in a lecture is
 reusable `video_material`; reading one slide to resolve the user's present
-question is a `task_specific_observation`. The latter may be consumed
-immediately by ChatGPT but is deliberately absent from ordinary future search.
+question is a `task_specific_observation`. ChatGPT consumes the latter in the
+active conversation; the system does not save or index it.
 
 ## Normal workflow
 
@@ -365,22 +420,23 @@ For each video:
 5. Compute missing time ranges.
 6. Use YouTube MCP captions where they can supply the missing transcript.
 7. Identify any remaining material or visual-sensory gap.
-8. Declare the request's `contentClass`, `outputType`, and `outputFormat`, then
-   construct a Gemini request only for that gap.
+8. Declare the request's `contentClass`. For `video_material`, also declare one
+   controlled `outputType` and compatible `outputFormat`. Construct a Gemini
+   request only for the identified gap.
 9. Read the exact request file and prompt into the Gemini request log. Create
    the logical request if needed and append its next authorized `pending` run.
 10. Verify the same request file, declared class, request ID, and run number
     immediately before Gemini credentials are loaded.
 11. Send one Gemini request at a time.
-12. Save the complete successful response after verifying that the router
-    result and pending run have the same request ID, run number, and exact
-    request hash. Include a required format-check result when the declared
-    format has a checker.
-13. Finish that run with the saved-response reference.
-14. If and only if the class is `video_material`, add the response to the video
-    material index after the applicable structured check or free-form review.
-15. Give task-specific observations to ChatGPT for reasoning without indexing
-    them.
+12. For `video_material`, save the complete successful response after
+    verifying that the router result and pending run have the same request ID,
+    run number, and exact request hash. Include the required format-check result
+    and finish the run with the saved-response reference.
+13. Add every eligible saved `video_material` response to the index after the
+    applicable structured check or free-form review.
+14. For either one-time class, write no response file, finish the run with
+    `responseNotSavedByPolicy: true`, and give the live response to ChatGPT for
+    the active task.
 
 Do not select a Gemini credential or construct a request for a material type
 and time range already covered by compatible saved material. Transcript
@@ -408,17 +464,20 @@ For transcript-like material:
 6. Verify each downloaded file against its recorded SHA-256 before using it.
 7. Recalculate missing ranges if a selected file is absent or invalid.
 
-Do not search task-specific observations or direct answers when answering a new
-question. If existing `video_material` reveals a remaining visual gap, issue a
-narrow `task_specific_observation`, let Gemini report the sensory facts, and
-reason over those facts in ChatGPT.
+Task-specific observations and direct answers have no Drive response files or
+index entries. If existing `video_material` reveals a remaining visual gap,
+issue a narrow `task_specific_observation`, let Gemini report the sensory facts
+to the active conversation, and reason over those facts in ChatGPT.
 
 If the material index is missing, list that video's saved-response files and
 consider only files whose predeclared class is `video_material`. Recalculate
 each response ID and response hash. Rerun the registered checker for a
 structured format; inspect a free-form response before admitting it again.
 Create an empty index only after confirming that no saved `video_material`
-response can be indexed.
+response can be indexed. Rebuilding adds every eligible distinct
+`savedResponseId`; it never collapses transcript, translation, summary,
+systematic visual description, or systematic onscreen text merely because
+their source intervals match or overlap.
 
 ## Checking declared response formats
 
@@ -444,11 +503,12 @@ A failed check prevents automatic use under that structured format. The exact
 response remains available for inspection, but ChatGPT must not treat its
 fields, time range, or completion claim as validated.
 
-Run the required checker regardless of content class. Passing does not make a
-`task_specific_observation` or `direct_answer` eligible for the material index.
-For structured `video_material`, passing is required for admission. For
+Run the required checker for every structured `video_material` response before
+finishing its saved-response file. Passing is required for admission. For
 free-form `video_material`, ChatGPT reads the response once; adding it to the
-index records the acceptance without inventing a `passed` format status.
+index records the acceptance without inventing a `passed` format status. The
+two one-time classes create no saved response and therefore no durable
+`formatCheck`.
 
 ### Gemini transcript version 1
 
@@ -461,8 +521,8 @@ For transcript format `gemini-transcript` version `1`:
 
 1. Extract the generated JSON from the Gemini response.
 2. Require exactly the documented fields and types.
-3. Parse all timestamps as full-video `MM:SS.mmm`; the minute part may exceed
-   `99`.
+3. Parse all timestamps as full-video `MM:SS.mmm`; the minute part accepts
+   values above `99`.
 4. Require the returned clip start and end to match the request file.
 5. Require every segment to have increasing start and end timestamps inside
    the returned clip. Permit overlapping speech, but require segments to be
@@ -472,7 +532,7 @@ For transcript format `gemini-transcript` version `1`:
 7. Derive the covered time range from the requested clip start through the
    verified completed-through timestamp.
 
-No caller may supply or override transcript covered time. A complete
+Callers cannot supply or override transcript covered time. A complete
 transcript covers the full requested clip. A valid incomplete transcript
 covers only its verified portion, and the remaining range is processed with a
 smaller or otherwise changed request. A malformed response remains saved in
@@ -496,12 +556,13 @@ request ID. Prompt wording, model, generation settings, response schema, video
 ID, or clip bounds remain meaningful request differences because they change
 the request sent to Gemini.
 
-`contentClass`, `outputType`, and the declared `outputFormat` remain immutable
-metadata on that request entry. They do not create a different request ID. If
-an existing request ID is presented with conflicting local metadata, stop and
-show the earlier entry; never use relabelling to permit the same Gemini call
-again. A genuinely broader material request must use a meaningfully different
-prompt or other content in the request sent to Gemini.
+`contentClass` remains immutable metadata on every request entry. Controlled
+`outputType` and declared `outputFormat` are also immutable for
+`video_material` and are absent for the two one-time classes. These local
+fields do not create a different request ID. If an existing request ID is
+presented with conflicting local metadata, stop and show the earlier entry;
+never use relabelling to permit the same Gemini call again. A genuinely broader
+material request uses meaningfully different prompt or other request content.
 
 For this purpose, normalize the request by parsing the JSON, replacing every
 supported YouTube URL with the normalized video ID representation, sorting
@@ -516,24 +577,28 @@ loading a Gemini credential, `gemini_request.py` must verify:
 - the expected `runNumber`;
 - the video ID in every supplied YouTube URI;
 - the start and end offsets;
-- the declared content class, output type, and output format;
+- the declared content class;
+- the controlled output type and output format for `video_material`, or their
+  required absence for either one-time class;
 - the endpoint, model, and method; and
 - that this is the request entry's highest-numbered run and its `runStatus` is
   still `pending`.
 
 Any mismatch stops before network access.
 
-One logged Gemini request may contain only one normalized YouTube video ID.
+One logged Gemini request contains exactly one normalized YouTube video ID.
 For comparisons, process each video separately and compare the saved responses
 afterward; do not place a multi-video request inside one per-video log.
 
 Before appending another run, calculate the current status from the
-highest-numbered run. Surface the saved responses from every earlier successful
-run, then apply these rules:
+highest-numbered run. Surface every saved response from earlier successful
+`video_material` runs and every deliberate-non-storage marker from earlier
+one-time runs, then apply these rules:
 
 - `pending`: do not send another copy;
-- `succeeded`: use the saved response; an identical retry requires a new
-  explicit authorization;
+- `succeeded`: use the saved response for `video_material`; for a one-time
+  class, report that its response was deliberately not retained. Either form
+  requires a new explicit authorization before an identical later run;
 - `failed`: require a new authorization with a recorded reason, respect every
   unexpired saved cooldown, and never repeat an unchanged terminal request
   error; and
@@ -551,46 +616,54 @@ saving them. Never store credential values or fingerprints.
 
 ## Interrupted runs
 
-A run may be interrupted when it remains `pending` but the Work session that
-started it cannot be confirmed as active. Elapsed time alone does not prove
-that the session stopped. The system may know that the request was prepared;
-it may not know whether Gemini received it or returned a response.
+A run is eligible to be marked `interrupted` when it remains `pending` but the
+Work session that started it cannot be confirmed as active. Elapsed time alone
+does not prove that the session stopped. The durable log proves that the
+request was prepared but does not prove whether Gemini received it or returned
+a response.
 
 When a later session encounters such a run:
 
 1. stop before calling Gemini;
-2. search that video's saved-response files for the exact request ID, run
-   number, and exact request hash;
-3. verify every candidate's response hash, stored-file hash, and immutable
-   request metadata;
+2. for `video_material`, search that video's saved-response files for the exact
+   request ID, run number, and exact request hash, then verify every candidate's
+   response hash, stored-file hash, and immutable request metadata;
+3. for either one-time class, perform no response-file search because the
+   storage policy creates no such file;
 4. show the user the video, requested time range, start time, request ID, run
-   number, routing evidence, and exact saved-response evidence;
+   number, routing evidence, and all available saved-response evidence;
 5. ask the user to confirm that the earlier session is no longer doing this
    work;
-6. when one exact saved response exists, finish the existing run as
-   `succeeded` without another Gemini call;
-7. when no exact saved response exists, ask whether to mark the run
-   `interrupted`, record the user's decision and reason, and permit another run
-   only after explicit authorization and every saved cooldown; and
+6. for `video_material`, when one exact saved response exists, finish the
+   existing run as `succeeded` without another Gemini call;
+7. when no exact reusable-material response exists, or when the request belongs
+   to a one-time class, ask whether to mark the run `interrupted`, record the
+   user's decision and reason, and permit another run only after explicit
+   authorization and every saved cooldown; and
 8. stop for investigation when multiple files claim the same request and run
    or any binding or integrity check fails.
 
-An independently verified unlinked response may still contain useful video
-material. It never completes the pending run. Show it as evidence during the
-user's decision, but use only an exact verified run-linked response and its
-retained safe router result to finish that run. Do not add a two-phase
-response-upload protocol, invent missing network attempts, infer that the
-request failed, or claim exactly-once processing.
+An independently verified unlinked reusable-material response remains
+available for separate material-index admission. It never completes the
+pending run. Show it as evidence during the user's decision, but use only an
+exact verified run-linked response and its retained safe router result to
+finish that run. Do not add a two-phase response-upload protocol, invent
+missing network attempts, infer that the request failed, or claim exactly-once
+processing.
 
 When a later session finishes a run from an exact saved response, set
 `endedAt` from the bound successful router attempt. Do not use the later repair
 time as the run's completion time; the request log's `updatedAt` records when
 the later Drive update occurred.
 
-The normal write order remains:
+The normal write orders are:
 
 ```text
-append pending run → call Gemini → save response → finish run
+video_material:
+append pending run → call Gemini → save response → finish run → update index
+
+task_specific_observation or direct_answer:
+append pending run → call Gemini → finish run as deliberately not saved
 ```
 
 A VM can disappear between those steps. That rare ambiguity is accepted and
@@ -600,7 +673,7 @@ resolved by the user, not by an automatic crash-handling system.
 
 Do not intentionally process the same video in two write-capable Work sessions
 at the same time. Concurrent read-only use of saved responses is allowed, and
-different videos may be processed independently.
+different videos are processed independently.
 
 Google Drive cannot acquire a lock and replace a file as one indivisible
 operation. Therefore the system does not implement session ownership,
@@ -619,8 +692,8 @@ aliases.
 The new Drive folder and all three file formats start at file-format version
 `1`. Normal code must not import, search, migrate, or fall back to cache-v2
 files.
-Old cache-v2 records may remain temporarily as read-only comparison evidence
-and may be deleted separately after representative validation.
+Old cache-v2 records remain temporarily as read-only comparison evidence. They
+are deleted separately after representative validation.
 
 The implementation must replace the old script names, tests, Drive folder,
 filenames, command names, JSON fields, skill instructions, contracts, and
@@ -640,8 +713,16 @@ approved.
 - empty-index refusal until saved-response enumeration is confirmed;
 - selected-file-only download planning and replanning after a missing or
   invalid file;
-- complete exclusion of task-specific observations and direct answers from
-  material search; and
+- transcript, translation, summary, systematic visual description, and
+  systematic onscreen text for the same interval all remain indexed;
+- adding a distinct saved-response ID preserves every existing entry even when
+  intervals or output types match or overlap;
+- adding the same ID is an idempotent verified no-op, while the same ID with
+  different content stops;
+- search filters explicit index fields and uses `savedResponseId` only after
+  selection for direct retrieval and verification;
+- task-specific observations and direct answers have no response files or
+  material-index entries; and
 - complete isolation from cache v2.
 
 ### Content classification and response preservation
@@ -649,14 +730,22 @@ approved.
 - all three content classes are declared before request construction and bound
   immutably to the request entry without changing request identity;
 - relabelling an existing request cannot permit another Gemini call;
-- the logical request's class cannot be replaced while saving a run's response;
+- the logical request's class cannot be replaced while saving a
+  `video_material` run's response;
 - the exact prompt is retained in the request log;
-- every successful response is preserved and linked from its request;
+- every successful `video_material` response is preserved and linked from its
+  request run;
+- successful task-specific observations and direct answers write no response
+  file and require `responseNotSavedByPolicy: true` in their run;
+- the controlled output-type list rejects arbitrary categories;
+- `video_material` requires controlled `outputType` and compatible
+  `outputFormat`, while both fields are absent for the one-time classes;
+- reusable saved filenames contain their verified controlled output type;
 - identical response text from different source time ranges receives distinct
   saved-response identities;
-- only `video_material` can enter the material index;
-- a structured format always runs its registered checker, regardless of
-  content class;
+- only `video_material` enters the material index;
+- every structured saved `video_material` response runs its registered
+  checker;
 - a free-form format never contains a fabricated format-check result;
 - free-form material cannot claim indexed time outside its source range;
 - systematic OCR can enter material search while an otherwise similar
@@ -676,9 +765,10 @@ approved.
 - credential failover and bounded transient retries remain attempts inside one
   run;
 - terminal runs are immutable, and appending another run preserves every
-  earlier authorization, attempt, cooldown, and response reference;
-- two successful authorized runs retain two separately verifiable response
-  references;
+  earlier authorization, attempt, cooldown, saved-response reference, and
+  deliberate-non-storage marker;
+- two successful authorized `video_material` runs retain two separately
+  verifiable response references;
 - each saved response verifies back to exactly one request ID, run number, and
   exact request hash;
 - each saved response retains the validated safe router result needed to
@@ -687,9 +777,11 @@ approved.
   user confirms the earlier session has stopped, without another network call;
 - an unlinked response cannot finish a pending run, and multiple claimants or
   any binding mismatch stop for investigation;
-- a succeeded run requires its complete response reference, while other
-  statuses contain none;
-- a later failed run does not hide an earlier successful response;
+- a succeeded `video_material` run requires its complete response reference; a
+  succeeded one-time run requires `responseNotSavedByPolicy: true`; other
+  statuses contain neither form;
+- a later failed run does not hide an earlier successful response or
+  deliberate-non-storage marker;
 - current status is calculated from the highest-numbered run; and
 - no request-level status, cooldown, authorization, or response summary is
   persisted as separately writable truth.
@@ -721,6 +813,8 @@ approved.
 - a pending run from an unavailable session stops;
 - exact run-linked response discovery, integrity verification, user-confirmed
   session cessation, and completion without another Gemini call;
+- one-time pending runs perform no response-file search and require the user's
+  interrupted-run decision;
 - no automatic retry or claim that an unlinked response completed a run;
 - `endedAt` restored from the bound router result rather than the later log
   update;
