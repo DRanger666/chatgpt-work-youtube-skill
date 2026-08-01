@@ -315,8 +315,8 @@ Each run contains:
   its plain reason, and `usedAt`; and
 - `savedResponseId`, `savedResponseDriveFileId`, and
   `savedResponseFileSha256` when a `video_material` run succeeds;
-- `responseNotSavedByPolicy: true` when a `task_specific_observation` or
-  `direct_answer` run succeeds; and
+- command-generated `responseNotSavedByPolicy: true` when a verified
+  `task_specific_observation` or `direct_answer` run succeeds; and
 - none of those success fields for `pending`, `failed`, or `interrupted`.
 
 Create the request entry and run `1` together. Every later deliberate execution
@@ -379,11 +379,13 @@ field in the request log and never create arbitrary output categories.
 
 Preserve and link the exact successful response only for `video_material`.
 For either one-time class, return the response to the active conversation and
-finish the run with `responseNotSavedByPolicy: true`; the response text is not
-written to Drive. That required marker distinguishes deliberate non-storage
-from a missing saved-response write. A later identical request reports the
-earlier success and deliberate non-storage, then requires a new explicit
-authorization before another run.
+finish the run through the verified one-time-success procedure below; the
+response text is not written to Drive. `finish-run` writes
+`responseNotSavedByPolicy: true` itself after verification. It never accepts
+that Boolean from the caller. The required marker distinguishes deliberate
+non-storage from a missing saved-response write. A later identical request
+reports the earlier success and deliberate non-storage, then requires a new
+explicit authorization before another run.
 
 Do not add a task index, automatic semantic promotion, retention policy, or
 cleanup subsystem in this release. To retain a sensory record for future use,
@@ -445,9 +447,12 @@ For each video:
     format-check result and finish the run with the saved-response reference.
 13. Add every eligible saved `video_material` response to the index after the
     applicable structured check or free-form review.
-14. For either one-time class, write no response file, finish the run with
-    `responseNotSavedByPolicy: true`, and give the live response to ChatGPT for
-    the active task.
+14. For either one-time class, give `finish-run` the actual successful router
+    result and response file. After it verifies the request ID, run number,
+    exact request hash, terminal success, response hash, and attempt history,
+    it copies the routing attempts and original terminal time into the run,
+    writes `responseNotSavedByPolicy: true`, and leaves no response file on
+    Drive. Give the verified live response to ChatGPT for the active task.
 
 Do not select a Gemini credential or construct a request for a material type
 and time range already covered by compatible saved material. Transcript
@@ -636,6 +641,33 @@ suffix. An equal full list is an idempotent no-op. A mismatch, gap, duplicate,
 reordering, stored list longer than the router result, or terminal attempt that
 is not the router result's final attempt stops without changing the run.
 
+### Finishing a one-time run
+
+`responseNotSavedByPolicy: true` is a storage-policy marker, not evidence of
+Gemini success. For `task_specific_observation` and `direct_answer`,
+`finish-run` requires the actual safe router result and response file produced
+by `gemini_request.py`. It verifies all of the following before changing the
+pending run:
+
+- router status is successful and its final numbered attempt has the matching
+  successful HTTP classification;
+- router `requestId`, `runNumber`, and `exactRequestSha256` match the logical
+  request and highest pending run;
+- a fresh SHA-256 of the exact response-file bytes equals the router's
+  `responseSha256`;
+- all attempt numbers, timestamps, classifications, cooldowns, and selected
+  credential aliases are valid; and
+- attempts already stored on the pending run satisfy the exact-prefix rule
+  above.
+
+After every check passes, `finish-run` appends only the missing routing
+attempts, sets `endedAt` from the router's final successful attempt, sets
+`runStatus` to `succeeded`, and writes `responseNotSavedByPolicy: true` in the
+same request-log update. It does not accept caller-supplied status, completion
+time, routing attempts, or policy marker. It writes no saved-response fields
+and uploads no response file to Drive. A missing, failed, incomplete,
+mismatched, or internally inconsistent router result leaves the run unchanged.
+
 ## Interrupted runs
 
 A run is eligible to be marked `interrupted` when it remains `pending` but the
@@ -688,7 +720,8 @@ video_material:
 append pending run → call Gemini → save response → finish run → update index
 
 task_specific_observation or direct_answer:
-append pending run → call Gemini → finish run as deliberately not saved
+append pending run → call Gemini → verify router success and response bytes →
+finish run as deliberately not saved
 ```
 
 A VM can disappear between those steps. That rare ambiguity is accepted and
@@ -761,7 +794,8 @@ approved.
 - every successful `video_material` response is preserved and linked from its
   request run;
 - successful task-specific observations and direct answers write no response
-  file and require `responseNotSavedByPolicy: true` in their run;
+  file and receive a command-generated `responseNotSavedByPolicy: true` only
+  after verified router success;
 - the controlled output-type list rejects arbitrary categories;
 - `video_material` requires controlled `outputType` and compatible
   `outputFormat`, while both fields are absent for the one-time classes;
@@ -809,8 +843,12 @@ approved.
 - an unlinked response cannot finish a pending run, and multiple claimants or
   any binding mismatch stop for investigation;
 - a succeeded `video_material` run requires its complete response reference; a
-  succeeded one-time run requires `responseNotSavedByPolicy: true`; other
-  statuses contain neither form;
+  succeeded one-time run requires verified router success, copied routing
+  attempts and terminal time, and command-generated
+  `responseNotSavedByPolicy: true`; other statuses contain neither form;
+- a bare caller-supplied policy Boolean, failed router result, mismatched
+  request or run binding, mismatched response hash, or conflicting attempt
+  history cannot finish a one-time run;
 - a later failed run does not hide an earlier successful response or
   deliberate-non-storage marker;
 - current status is calculated from the highest-numbered run; and

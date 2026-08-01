@@ -243,8 +243,12 @@ three reopened items below are governed by
   - [ ] Enforce saved cooldowns and reject unchanged terminal request errors.
   - [ ] Require a complete saved-response reference before marking a
         `video_material` run `succeeded`, including a failed-format response.
-        For a successful task-specific observation or direct answer, require
-        `responseNotSavedByPolicy: true` and forbid saved-response fields.
+        For a task-specific observation or direct answer, require `finish-run`
+        to verify the actual successful router result and response-file hash,
+        copy routing attempts and terminal time, generate
+        `responseNotSavedByPolicy: true`, and forbid saved-response fields.
+        Never accept that Boolean, status, attempts, or completion time from
+        the caller.
   - [ ] Require the response-saving command to verify the router result's
         request ID, run number, and exact request hash against the pending run,
         recompute SHA-256 over the exact response-file bytes, require equality
@@ -277,12 +281,14 @@ three reopened items below are governed by
         routing consistency, immutable pre-call classification, relabelling
         that cannot bypass duplicate prevention, exact prompt retention,
         controlled output-type rejection, deliberate non-storage markers,
-        monotonic run numbering, multiple successful reusable response
-        references, saved-response back-links, interrupted-write completion
-        without a new network call, response-byte hash mismatch, attempt-prefix
-        reconciliation, unlinked and conflicting response rejection,
-        append-only terminal history, derived current status, and absence of
-        credentials in saved files.
+        bare-marker rejection, one-time failed and mismatched router-result
+        rejection, one-time response-byte verification, copied one-time attempt
+        history and terminal time, monotonic run numbering, multiple successful
+        reusable response references, saved-response back-links,
+        interrupted-write completion without a new network call, response-byte
+        hash mismatch, attempt-prefix reconciliation, unlinked and conflicting
+        response rejection, append-only terminal history, derived current
+        status, and absence of credentials in saved files.
 - Related documents:
   - [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
   - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)

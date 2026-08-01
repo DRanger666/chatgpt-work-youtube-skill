@@ -197,15 +197,20 @@ only the missing suffix. Reject mismatches, gaps, duplicates, reordering,
 extra stored attempts, and a terminal attempt that is not last.
 
 On `task_specific_observation` or `direct_answer` success, return the response
-to the active conversation, write no response file, and finish the run with
-`responseNotSavedByPolicy: true`. The router and request log reject a saved-
-response reference on either one-time class.
+to the active conversation and write no Drive response file. `finish-run`
+requires the actual successful safe router result and response file, verifies
+the request ID, run number, exact request hash, terminal success, exact response
+hash, and complete attempt history, then copies the attempts and original
+terminal time into the run. It generates `responseNotSavedByPolicy: true` in
+the same request-log update and rejects a saved-response reference on either
+one-time class. A caller cannot supply the Boolean marker, run status, attempts,
+or completion time.
 
 ## Error policy
 
 | Response | Classification | Action |
 |---|---|---|
-| `2xx` | Success | For `video_material`, save and link the response; for either one-time class, return it without Drive response storage and record `responseNotSavedByPolicy: true` |
+| `2xx` | Success | For `video_material`, save and link the verified response; for either one-time class, verify the bound router result and exact response bytes, copy attempts and terminal time, generate `responseNotSavedByPolicy: true`, and return the response without Drive response storage |
 | `429 RESOURCE_EXHAUSTED` | Project rate limit | Cool down bucket; try other healthy bucket |
 | `408`, `500`, `502`, `503`, `504` | Transient | Bounded backoff with jitter; then fail over |
 | `401` or credential-specific `403` | Credential failure | Disable bucket for run; try other bucket |
@@ -231,8 +236,9 @@ Use deterministic local HTTP fixtures before live use:
   run;
 - controlled reusable output-type acceptance and arbitrary-category rejection;
   and
-- required deliberate-non-storage markers with no response files for both
-  one-time classes.
+- bare-marker rejection, bound successful-router-result verification, exact
+  response-byte verification, copied routing history and terminal time, and no
+  response files for both one-time classes.
 
 After offline tests pass, make one inexpensive validation request per
 credential. Do not stress-test quota or deliberately provoke throttling.
