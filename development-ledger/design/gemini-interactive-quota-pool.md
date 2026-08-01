@@ -7,8 +7,8 @@ primary-and-fallback pool for interactive ChatGPT Work video analysis.
 
 Do not use Gemini Batch API. The workflow is human-in-the-loop, expects results
 inside the active conversation, and is not driven by background automation.
-Batch submission, polling, delayed retrieval, and extra state reconciliation
-would add complexity without serving that interaction model.
+Batch submission, polling, delayed retrieval, and extra bookkeeping would add
+complexity without serving that interaction model.
 
 Do not add an external proxy, Redis, a dashboard, parallel chunk execution, or
 per-request round-robin rotation.
@@ -19,8 +19,9 @@ per-request round-robin rotation.
   rate-limited or unavailable.
 - Avoid draining both projects merely because two credentials exist.
 - Respect project-level cooldowns and server-provided retry information.
-- Keep every request cache-first and every network attempt observable.
-- Never expose, log, cache, or commit credential material.
+- Search saved video outputs before every request and keep every network
+  attempt observable.
+- Never expose, log, save, or commit credential material.
 - Remain portable across fresh ChatGPT Work VMs.
 
 ## Preconditions
@@ -41,7 +42,7 @@ fingerprints.
 
 ## Request routing
 
-1. Complete the persistent research-cache lookup before selecting a credential.
+1. Complete the saved-video-output search before selecting a credential.
 2. Select `primary` unless it is disabled or cooling down.
 3. Keep at most one Gemini video request in flight.
 4. On success, return the response and keep the selected bucket healthy.
@@ -68,7 +69,7 @@ fingerprints.
 - Process additional chunks sequentially.
 - Let project cooldown and failover happen between requests.
 - Never create parallel calls merely to consume both projects.
-- Synthesize from cached chunk results whenever possible.
+- Synthesize from saved chunk outputs whenever possible.
 
 ## State
 
@@ -77,7 +78,7 @@ installation's `workspace/` directory:
 
 ```json
 {
-  "schemaVersion": 1,
+  "fileFormatVersion": 1,
   "buckets": {
     "primary": {
       "cooldownUntil": null,
@@ -96,16 +97,17 @@ installation's `workspace/` directory:
 Rate-limit windows are short. Do not introduce a separate persistent quota
 database unless real cross-session evidence later justifies it.
 
-## Cache lifecycle
+## Gemini request log
 
-Retain one Drive cache record per request fingerprint. Upgrade the record to an
-attempt-history schema:
+Keep request history in the per-video Gemini request log defined in
+[`youtube-saved-work.md`](youtube-saved-work.md). The log is separate from the
+video output index. A request entry preserves the router's safe attempt data:
 
 ```json
 {
-  "schemaVersion": 2,
-  "status": "succeeded",
-  "attempts": [
+  "fileFormatVersion": 1,
+  "requestStatus": "succeeded",
+  "routingAttempts": [
     {
       "bucket": "primary",
       "httpStatus": 429,
@@ -121,16 +123,15 @@ attempt-history schema:
 }
 ```
 
-The cache transaction may reopen an identical failed record only when a
-documented permitted retry reason is supplied. Preserve prior attempts during
-that retry. Never include a key, authorization header, key fragment, or key
-fingerprint.
+An identical failed request may run again only when the log contains a
+documented permitted retry reason. Preserve prior attempts during that retry.
+Never include a key, authorization header, key fragment, or key fingerprint.
 
 ## Error policy
 
 | Response | Classification | Action |
 |---|---|---|
-| `2xx` | Success | Return and cache |
+| `2xx` | Success | Return and save the response |
 | `429 RESOURCE_EXHAUSTED` | Project rate limit | Cool down bucket; try other healthy bucket |
 | `408`, `500`, `502`, `503`, `504` | Transient | Bounded backoff with jitter; then fail over |
 | `401` or credential-specific `403` | Credential failure | Disable bucket for run; try other bucket |
@@ -149,19 +150,21 @@ Use deterministic local HTTP fixtures before live use:
 - terminal `400` with no fallback call;
 - invalid primary credential followed by fallback success;
 - cooldown persistence without secret material;
-- cache schema migration and retry-attempt preservation.
+- request-log retry authorization and preservation of earlier attempts.
 
 After offline tests pass, make one inexpensive validation request per
 credential. Do not stress-test quota or deliberately provoke throttling.
 
-## Implementation outcome
+## Historical implementation outcome
 
 Implemented in
 [`223380b`](https://github.com/DRanger666/chatgpt-work-youtube-skill/commit/223380bf7b508bf2536b91b07f617500f2ef3316).
 
-- Eleven offline tests cover routing, cooldown, retry, terminal failure,
+- Eleven offline tests covered routing, cooldown, retry, terminal failure,
   duplicate credentials, secret-free state, cache reopening, and legacy
-  migration.
+  migration at that historical checkpoint. LEDGER-010 now requires the routing
+  behavior to use the plain Gemini request log and removes the legacy cache
+  attachment.
 - Both credentials returned HTTP 200 from the Gemini model-metadata endpoint.
 - No generation request or quota stress test was used for credential
   validation.

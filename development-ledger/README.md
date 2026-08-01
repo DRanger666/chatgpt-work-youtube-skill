@@ -67,5 +67,4 @@ the concise index and lifecycle record.
 |---|---|
 | [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md) | Layer-aware clean-account installation testing and friction reporting |
 | [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md) | Conservative two-project Gemini routing for interactive video analysis |
-| [`design/youtube-artifact-cache-v3.md`](design/youtube-artifact-cache-v3.md) | Artifact-first retrieval with search-only manifests, bound Gemini execution, immutable result records, and validated reusable artifacts |
-| [`design/youtube-artifact-cache-v3-single-writer-policy.md`](design/youtube-artifact-cache-v3-single-writer-policy.md) | Initial-release same-video write ownership, recovery, and concurrency limits |
+| [`design/youtube-saved-work.md`](design/youtube-saved-work.md) | Plain-language design for saved video outputs, per-video output indexes, Gemini request logs, interrupted requests, and same-video limits |
