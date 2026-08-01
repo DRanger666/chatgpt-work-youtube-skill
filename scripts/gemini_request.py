@@ -13,9 +13,10 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+import gemini_request_log
+import youtube_work_common as common
 
-STATE_SCHEMA_VERSION = 1
-ROUTING_SCHEMA_VERSION = 1
+
 TRANSIENT_HTTP_STATUSES = {408, 500, 502, 503, 504}
 KEY_INVALID_MARKERS = (
     "api_key_invalid",
@@ -62,15 +63,18 @@ def load_state(path):
     path = Path(path).resolve()
     if not path.exists():
         return {
-            "schemaVersion": STATE_SCHEMA_VERSION,
+            "fileFormatVersion": common.FILE_FORMAT_VERSION,
             "buckets": {
                 "primary": default_bucket_state(),
                 "fallback": default_bucket_state(),
             },
         }
     state = load_json(path)
-    if state.get("schemaVersion") != STATE_SCHEMA_VERSION:
-        raise SystemExit(f"Unsupported Gemini pool state schema: {state.get('schemaVersion')}")
+    if state.get("fileFormatVersion") != common.FILE_FORMAT_VERSION:
+        raise SystemExit(
+            "Unsupported Gemini pool-state format: "
+            f"{state.get('fileFormatVersion')}"
+        )
     buckets = state.setdefault("buckets", {})
     for alias in ("primary", "fallback"):
         buckets.setdefault(alias, default_bucket_state())
@@ -224,8 +228,17 @@ def mark_disabled(state, alias, reason):
     }
 
 
-def attempt_record(alias, started_at, finished_at, http_status, classification, error_status):
+def attempt_record(
+    attempt_number,
+    alias,
+    started_at,
+    finished_at,
+    http_status,
+    classification,
+    error_status,
+):
     attempt = {
+        "attemptNumber": attempt_number,
         "bucket": alias,
         "startedAt": isoformat(started_at),
         "finishedAt": isoformat(finished_at),
@@ -262,15 +275,30 @@ def earliest_cooldown(state):
 
 
 def run(args):
-    request_bytes = Path(args.request).resolve().read_bytes()
+    request_path = Path(args.request).resolve()
+    request_log = common.load_json(Path(args.request_log))
+    request_entry, run_entry = gemini_request_log.verify_pending_run(
+        request_log,
+        request_path,
+        args.endpoint,
+        args.model,
+        args.method,
+        args.request_id,
+        args.run_number,
+    )
+    request_bytes = request_path.read_bytes()
     buckets = load_buckets()
     state_path = Path(args.state).resolve()
     state = load_state(state_path)
     routing = {
-        "schemaVersion": ROUTING_SCHEMA_VERSION,
+        "fileFormatVersion": common.FILE_FORMAT_VERSION,
         "status": "pending",
+        "requestId": request_entry["requestId"],
+        "runNumber": run_entry["runNumber"],
+        "exactRequestSha256": run_entry["exactRequestSha256"],
         "selectedBucket": None,
         "attempts": [],
+        "completedAt": None,
     }
     tried_buckets = set()
     last_payload = None
@@ -286,9 +314,10 @@ def run(args):
         ]
         if not available:
             routing["status"] = "failed"
-            routing["earliestCooldownUntil"] = (
-                isoformat(earliest_cooldown(state)) if earliest_cooldown(state) else None
-            )
+            routing["completedAt"] = isoformat(now)
+            cooldown = earliest_cooldown(state)
+            if cooldown is not None:
+                routing["earliestCooldownUntil"] = isoformat(cooldown)
             if last_payload is None:
                 last_http_status = 429
                 last_payload = {
@@ -299,7 +328,7 @@ def run(args):
                     }
                 }
             write_json(args.response, safe_failure_payload(last_http_status, last_payload))
-            write_json(args.routing_metadata, routing)
+            write_json(args.router_result, routing)
             write_json(state_path, state)
             print(json.dumps({"status": "failed", "attempts": len(routing["attempts"])}))
             return 3
@@ -320,6 +349,7 @@ def run(args):
             payload = decode_payload(response_bytes)
             classification, error_status = classify_response(http_status, payload)
             attempt = attempt_record(
+                len(routing["attempts"]) + 1,
                 alias,
                 started_at,
                 finished_at,
@@ -335,8 +365,12 @@ def run(args):
                 state["buckets"][alias] = default_bucket_state()
                 routing["status"] = "succeeded"
                 routing["selectedBucket"] = alias
-                write_json(args.response, payload)
-                write_json(args.routing_metadata, routing)
+                routing["completedAt"] = attempt["finishedAt"]
+                common.write_json(Path(args.response), payload)
+                routing["responseSha256"] = common.sha256_hex(
+                    Path(args.response).resolve().read_bytes()
+                )
+                write_json(args.router_result, routing)
                 write_json(state_path, state)
                 print(
                     json.dumps(
@@ -388,8 +422,9 @@ def run(args):
                 break
 
             routing["status"] = "failed"
+            routing["completedAt"] = attempt["finishedAt"]
             write_json(args.response, safe_failure_payload(http_status, payload))
-            write_json(args.routing_metadata, routing)
+            write_json(args.router_result, routing)
             write_json(state_path, state)
             print(
                 json.dumps(
@@ -410,7 +445,10 @@ def build_parser():
     )
     parser.add_argument("--request", required=True)
     parser.add_argument("--response", required=True)
-    parser.add_argument("--routing-metadata", required=True)
+    parser.add_argument("--router-result", required=True)
+    parser.add_argument("--request-log", required=True)
+    parser.add_argument("--request-id", required=True)
+    parser.add_argument("--run-number", required=True, type=int)
     parser.add_argument("--state", required=True)
     parser.add_argument(
         "--endpoint",
@@ -419,6 +457,8 @@ def build_parser():
             "gemini-3.6-flash:generateContent"
         ),
     )
+    parser.add_argument("--model", default="gemini-3.6-flash")
+    parser.add_argument("--method", default="POST")
     parser.add_argument("--timeout-seconds", type=float, default=600.0)
     parser.add_argument("--max-transient-retries", type=int, default=2)
     parser.add_argument("--base-backoff-seconds", type=float, default=1.0)
