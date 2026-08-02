@@ -130,35 +130,45 @@ feature, investigation, design, and refinement work.
     ```
 
 - Worker implementation:
-  - [ ] Change `scripts/ensure_youtube_mcp.sh` to create the maintained layout,
+  - [x] Change `scripts/ensure_youtube_mcp.sh` to create the maintained layout,
         consisting of `app/`, `config/`, `runtime/`, `state/`, `work/`,
         `README.md`, and `VERSION`.
-  - [ ] Remove creation of `bin/youtube-research-mcp` and
+  - [x] Remove creation of `bin/youtube-research-mcp` and
         `bin/youtube-research-http`, their permission changes, their generated
         README entries, and the wrapper-only verification condition.
-  - [ ] Keep `verify_install()` focused on the maintained installation: require
+  - [x] Keep `verify_install()` focused on the maintained installation: require
         `VERSION`, the pinned MCP commit, the pinned Node executable and
         version, and `app/dist/stdio-server.js`; perform tool enumeration
         directly through `scripts/call_youtube_mcp.mjs`.
-  - [ ] Require `work/` and `state/` when recognizing an existing maintained
+  - [x] Require `work/` and `state/` when recognizing an existing maintained
         installation. Do not recognize the former
         `bin/`/`materials/`/`workspace/` tree as current.
-  - [ ] If the exact destination already exists but fails current verification,
+  - [x] If the exact destination already exists but fails current verification,
         stop with a clear replacement-required message. Do not delete, rename,
         back up, or modify it from the implementation script.
-  - [ ] Update `SKILL.md`, `references/contracts.md`, the generated portable
+  - [x] Update `SKILL.md`, `references/contracts.md`, the generated portable
         `README.md`, and `.gitignore` to use only `work/` and `state/` for their
         defined purposes. Remove active references to the deleted directories
         and launchers; preserve historical ledger evidence unchanged.
-  - [ ] Change every operational path from `$install/workspace/` to
+  - [x] Change every operational path from `$install/workspace/` to
         `$install/work/`, and change the router-state path to
         `$install/state/gemini-keypool-state.json`. Leave credential handling
         at `$install/config/youtube-workbench-secrets.env` unchanged.
-  - [ ] Add focused repository checks for the maintained paths and removed
+  - [x] Add focused repository checks for the maintained paths and removed
         launcher-generation code. Run shell syntax checks, the complete
         existing offline suite, active-reference scans, and skill-package
         validation. Do not install an MCP, call Gemini, access Drive, modify the
         installed skill, or alter `/workspace/youtube-mcp-portable`.
+- Worker outcome:
+  - The installer now recognizes only the complete maintained root tree,
+    verifies the pinned runtime and compiled stdio server directly, and stops
+    without changing an invalid exact destination.
+  - Runtime instructions use `work/` only for disposable files and
+    `state/gemini-keypool-state.json` only for Gemini router state.
+  - Focused layout checks and all 85 offline tests passed under four hash seeds,
+    together with shell syntax, active-reference, and skill-package checks.
+  - No MCP installation, Gemini request, Drive operation, installed-skill
+    update, or change to `/workspace/youtube-mcp-portable` was performed.
 - Main/user acceptance after implementation review and merge:
   - [ ] Delete the existing `/workspace/youtube-mcp-portable` installation.
   - [ ] Run the merged installer to build a fresh portable installation from

@@ -23,15 +23,22 @@ workflow.
 Use this exact no-space layout:
 
 ```text
-youtube-mcp-portable/
+/workspace/youtube-mcp-portable/
   app/
-  bin/
   config/
-  materials/
   runtime/
-  workspace/
+  state/
+  work/
+  README.md
   VERSION
 ```
+
+Use `work/` for disposable argument files, requests, responses, downloaded
+working copies, and intermediate JSON. Reserve
+`state/gemini-keypool-state.json` for router state created when Gemini is first
+used. The displayed tree is the complete maintained root layout. Invoke the MCP
+through `scripts/call_youtube_mcp.mjs` and the pinned `runtime/bin/node`
+executable.
 
 Pinned implementation:
 

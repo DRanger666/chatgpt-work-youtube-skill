@@ -13,10 +13,10 @@ Google Drive or Gemini.
 ## Keep the workflow safe
 
 - Keep the portable installation at `/workspace/youtube-mcp-portable`, with
-  `materials/` and `workspace/` inside it.
+  disposable files under `work/` and Gemini router state under `state/`.
 - Never display, quote, log, or commit API keys. Keep credential files out of
-  prompts, saved responses, request logs, material indexes, `materials/`, and
-  `workspace/`.
+  prompts, saved responses, request logs, material indexes, `work/`, and
+  `state/`.
 - Store saved Gemini work only in the private `YouTubeVideoWork` Drive folder
   using the current file format. Do not search, import, migrate, or fall back to
   cache-v2 files.
@@ -50,7 +50,7 @@ Verify the server and enumerate its current tools:
   --install "$install" --list-tools
 ```
 
-Put complex MCP arguments in a JSON file under `$install/workspace/`. For
+Put complex MCP arguments in a JSON file under `$install/work/`. For
 `research-video` and `research-videos`, use `--structured-only`. Paginate
 broad transcript reads with `offset` and `maxSegments`; prefer focused
 queries.
@@ -195,7 +195,7 @@ python3 "$skill_dir/scripts/gemini_request.py" \
   --request-log REQUEST_LOG_JSON \
   --request-id REQUEST_ID \
   --run-number RUN_NUMBER \
-  --state "$install/workspace/gemini-keypool-state.json"
+  --state "$install/state/gemini-keypool-state.json"
 ```
 
 6. For a returned terminal failure, run `finish-run` with the router result,

@@ -5,8 +5,8 @@ __pycache__/
 node_modules/
 dist/
 config/
-workspace/
-materials/
+work/
+state/
 credentials/
 secrets/
 *credential*

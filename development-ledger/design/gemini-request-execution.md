@@ -140,9 +140,9 @@ Keep one Gemini request in flight. Route one run as follows:
 7. If no bucket is healthy, return failure and the earliest cooldown instead
    of sleeping or looping indefinitely.
 
-Keep short-lived bucket health in a local file under the portable
-installation's `workspace/` directory. Do not create a persistent quota
-database without observed cross-session need.
+Keep short-lived bucket health in
+`state/gemini-keypool-state.json` under the portable installation. Do not
+create a persistent quota database without observed cross-session need.
 
 | Response | Classification | Router action |
 |---|---|---|
