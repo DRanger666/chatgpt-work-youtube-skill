@@ -72,6 +72,90 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
 
+### LEDGER-016 — Simplify the portable installation layout
+
+- Status: Planned
+- Type: Refinement
+- Layer: Work VM/local portable installation
+- Evidence:
+  - The installer creates `bin/youtube-research-mcp` and
+    `bin/youtube-research-http`, but the supported workflow uses
+    `scripts/call_youtube_mcp.mjs`, which directly starts the pinned Node
+    runtime and `app/dist/stdio-server.js`. No active workflow invokes either
+    wrapper; the stdio wrapper remains referenced only by the installer's own
+    verification check.
+  - The installer creates and documents `materials/`, but no runtime code
+    reads or writes it. MCP results are deliberately temporary, while reusable
+    Gemini responses are stored on Drive.
+  - `workspace/` currently holds both disposable argument and intermediate
+    files and `gemini-keypool-state.json`. The latter preserves credential
+    cooldown and disablement state and must not be treated as disposable work.
+  - Naming an inner directory `workspace/` under
+    `/workspace/youtube-mcp-portable` obscures the distinction between the
+    mounted Work storage root and the installation's temporary files.
+- Decision:
+  - Keep `/workspace/youtube-mcp-portable` as the exact installation path.
+  - Keep `app/`, `runtime/`, and `config/`: they respectively contain the
+    pinned MCP application, its pinned Node runtime, and the locally
+    materialized credential file used by the Gemini router.
+  - Remove `bin/` and both generated launchers. Verify and invoke the MCP
+    directly through the same Node executable and compiled stdio server used
+    by `scripts/call_youtube_mcp.mjs`. Do not retain the unused HTTP entrypoint.
+  - Remove `materials/` without introducing a renamed replacement.
+  - Replace `workspace/` with `work/` for disposable local arguments,
+    requests, responses, downloaded working copies, and intermediate JSON.
+  - Store only the local Gemini routing state at
+    `state/gemini-keypool-state.json`. This state contains no credentials, but
+    it must remain separate from files that can be cleared after a task.
+  - The resulting maintained layout is exactly:
+
+    ```text
+    /workspace/youtube-mcp-portable/
+      app/
+      config/
+      runtime/
+      state/
+      work/
+      README.md
+      VERSION
+    ```
+
+- Required implementation:
+  - [ ] Change `scripts/ensure_youtube_mcp.sh` to create the maintained layout,
+        stop generating both launcher wrappers, and remove the wrapper-only
+        verification condition.
+  - [ ] Keep installation verification substantive: check the pinned source,
+        compiled stdio server, pinned Node executable and version, and a real
+        MCP handshake/tool enumeration.
+  - [ ] Make the old `bin/`/`materials/`/`workspace/` layout fail current-layout
+        discovery so it cannot be returned as an up-to-date installation.
+        Preserve the existing installation through the installer's timestamped
+        backup behavior before replacing it.
+  - [ ] If the replaced installation contains
+        `workspace/gemini-keypool-state.json`, carry that exact file into the
+        new `state/` location so an active cooldown is not forgotten. Preserve
+        all other old contents only in the timestamped backup; do not invent a
+        permanent compatibility layout.
+  - [ ] Update `SKILL.md`, `references/contracts.md`, the generated portable
+        `README.md`, and `.gitignore` to use only `work/` and `state/` for their
+        defined purposes. Remove active references to the deleted directories
+        and launchers; preserve historical ledger evidence unchanged.
+  - [ ] Add offline installer checks for the exact new tree, rejection of the
+        old layout, direct MCP verification without the installation-root
+        launcher directory, and preservation of an existing key-pool state
+        file during replacement.
+  - [ ] Verify that complex MCP arguments work from `work/`, Gemini routing
+        reads and updates the state file in `state/`, credentials remain in
+        `config/` with mode `0600`, and the complete offline suite and skill
+        package validation pass without Gemini calls or Drive mutation.
+- Completion rule: Close this item only when a clean installation and an
+  old-layout replacement both produce the maintained tree, the MCP handshake
+  succeeds without launcher wrappers, routing state survives replacement, and
+  no active contract, procedure, script, or test refers to the removed
+  installation-root `bin/`, `materials/`, or the installation's former
+  `workspace/` directory. The required Node executable remains
+  `runtime/bin/node`.
+
 ## Completed refinements
 
 ### LEDGER-014 — Remove redundant timestamp-coordinate metadata
