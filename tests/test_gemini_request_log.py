@@ -1,5 +1,7 @@
 import copy
+import contextlib
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -145,7 +147,6 @@ class RequestLogTests(unittest.TestCase):
             "video_material",
             output_type="transcript",
             output_format={"name": "gemini-transcript", "version": 1},
-            timestamps_relative_to="full_video",
             language_policy={"sourceLanguage": "original"},
             started_at=kwargs.pop("started_at", T0),
             **kwargs,
@@ -191,7 +192,7 @@ class RequestLogTests(unittest.TestCase):
         self.assertEqual(request["contentClass"], "video_material")
         self.assertEqual(request["outputType"], "transcript")
         self.assertEqual(request["outputFormat"], {"name": "gemini-transcript", "version": 1})
-        self.assertEqual(request["timestampsRelativeTo"], "full_video")
+        self.assertEqual(request["languagePolicy"], {"sourceLanguage": "original"})
         self.assertEqual(request["promptText"], TRANSCRIPT_PROMPT)
         self.assertEqual(run["runNumber"], 1)
         self.assertEqual(run["runStatus"], "pending")
@@ -220,7 +221,6 @@ class RequestLogTests(unittest.TestCase):
                 self.new_log(), self.request_path, VIDEO_ID, ENDPOINT, MODEL, "POST",
                 "video_material", output_type="transcript",
                 output_format={"name": "gemini-transcript", "version": 1},
-                timestamps_relative_to="full_video",
                 language_policy={"sourceLanguage": "original"},
                 started_at=T0,
             )
@@ -233,7 +233,7 @@ class RequestLogTests(unittest.TestCase):
         transcript_path = write_request(
             self.directory / "metadata-transcript.json", transcript_request
         )
-        with self.assertRaisesRegex(request_log.RequestLogError, "full-video"):
+        with self.assertRaisesRegex(request_log.RequestLogError, "original-language"):
             request_log.start_run(
                 self.new_log(),
                 transcript_path,
@@ -244,9 +244,34 @@ class RequestLogTests(unittest.TestCase):
                 "video_material",
                 output_type="transcript",
                 output_format={"name": "gemini-transcript", "version": 1},
-                language_policy={"sourceLanguage": "original"},
                 started_at=T0,
             )
+
+    def test_request_logs_and_cli_reject_removed_timestamp_coordinate_fields(self):
+        log, _, _ = self.start_transcript()
+        for field in ("timestamps" + "RelativeTo", "timestamp" + "Basis"):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(log)
+                changed["requests"][0][field] = "full_video"
+                with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
+                    request_log.validate_request_log(changed)
+
+        parser = request_log.build_parser()
+        removed_flag = "--timestamps-" + "relative-to"
+        arguments = [
+            "start-run",
+            "--request-log", "log.json",
+            "--request", "request.json",
+            "--endpoint", ENDPOINT,
+            "--model", MODEL,
+            "--video", VIDEO_ID,
+            "--output", "updated-log.json",
+            "--content-class", "direct_answer",
+            removed_flag, "full_video",
+        ]
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parser.parse_args(arguments)
 
     def test_translation_is_not_a_reusable_output_type(self):
         with self.assertRaisesRegex(

@@ -28,6 +28,10 @@ MODEL = "gemini-3.6-flash"
 T0 = "2026-08-01T10:00:00Z"
 T1 = "2026-08-01T10:00:01Z"
 T2 = "2026-08-01T10:00:02Z"
+REMOVED_TIME_COORDINATE_FIELDS = (
+    "timestamps" + "RelativeTo",
+    "timestamp" + "Basis",
+)
 
 
 def timestamp(milliseconds):
@@ -163,7 +167,6 @@ class SavedResponseFixture(unittest.TestCase):
             "video_material",
             output_type=output_type,
             output_format=output_format,
-            timestamps_relative_to="full_video" if transcript else None,
             language_policy=(
                 language_policy
                 if language_policy is not None
@@ -268,7 +271,6 @@ class SavedGeminiResponseTests(SavedResponseFixture):
             "video_material",
             output_type="transcript",
             output_format={"name": "gemini-transcript", "version": 1},
-            timestamps_relative_to="full_video",
             language_policy={"sourceLanguage": "original"},
             retry_reason="User requested another transcription run",
             started_at="2026-08-01T10:10:00Z",
@@ -491,6 +493,14 @@ class SavedGeminiResponseTests(SavedResponseFixture):
             [{"startMs": 7_200_000, "endMs": 7_260_000}],
         )
 
+    def test_transcript_checker_rejects_clip_relative_labels_for_nonzero_source(self):
+        item = self.build_response(
+            start_ms=600_000,
+            end_ms=1_200_000,
+            generated=transcript_content(start_ms=0, end_ms=600_000),
+        )
+        self.assertEqual(item["saved"]["formatCheck"]["failure"], "clip_mismatch")
+
     def test_free_form_material_has_no_fabricated_format_check(self):
         item = self.build_response(output_type="summary")
         self.assertNotIn("formatCheck", item["saved"])
@@ -537,6 +547,15 @@ class SavedGeminiResponseTests(SavedResponseFixture):
                 }
             )
 
+    def test_saved_responses_reject_removed_timestamp_coordinate_fields(self):
+        item = self.build_response()
+        for field in REMOVED_TIME_COORDINATE_FIELDS:
+            with self.subTest(field=field):
+                changed = copy.deepcopy(item["saved"])
+                changed[field] = "full_video"
+                with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
+                    saved.validate_saved_response(changed)
+
     def test_saved_response_files_are_immutable(self):
         item = self.build_response()
         original = item["path"].read_bytes()
@@ -576,7 +595,6 @@ class MaterialIndexTests(SavedResponseFixture):
             **extra,
         }
         if output_type == "transcript":
-            query.setdefault("timestampsRelativeTo", "full_video")
             query.setdefault("languagePolicy", {"sourceLanguage": "original"})
         return query
 
@@ -723,6 +741,27 @@ class MaterialIndexTests(SavedResponseFixture):
             plan["missingTimeRanges"], [{"startMs": 300_000, "endMs": 600_000}]
         )
 
+    def test_focused_nonzero_transcript_is_saved_indexed_and_reused_immediately(self):
+        item = self.build_response(start_ms=600_000, end_ms=1_200_000)
+        self.assertEqual(
+            item["saved"]["sourceTimeRange"],
+            {"startMs": 600_000, "endMs": 1_200_000},
+        )
+        self.assertEqual(
+            item["saved"]["coveredTimeRanges"],
+            [{"startMs": 600_000, "endMs": 1_200_000}],
+        )
+
+        index = saved.new_material_index(VIDEO_ID, updated_at=T0)
+        self.add(index, item)
+        query = self.query(start=600_000, end=1_200_000)
+        plan = saved.find_material(index, query)
+        self.assertEqual(plan["coverageStatus"], "complete")
+        self.assertEqual(plan["coverageCases"], ["exact"])
+        verified = saved.verify_selected(index, self.responses, query, plan)
+        self.assertEqual(verified["verificationStatus"], "verified")
+        self.assertEqual(saved.plan_missing_ranges(verified)["missingTimeRanges"], [])
+
     def test_incompatible_language_and_other_output_type_do_not_satisfy_query(self):
         english = self.build_response(
             output_type="systematic_onscreen_text",
@@ -740,6 +779,42 @@ class MaterialIndexTests(SavedResponseFixture):
         self.assertEqual(plan["coverageStatus"], "missing")
         self.assertEqual(plan["coverageCases"], ["incompatible", "missing"])
         self.assertEqual(len(plan["incompatibleMaterials"]), 1)
+
+    def test_material_search_boundaries_reject_removed_timestamp_coordinate_fields(self):
+        item = self.build_response()
+        index = saved.new_material_index(VIDEO_ID, updated_at=T0)
+        self.add(index, item)
+
+        for field in REMOVED_TIME_COORDINATE_FIELDS:
+            with self.subTest(boundary="index", field=field):
+                changed_index = copy.deepcopy(index)
+                changed_index["materials"][0][field] = "full_video"
+                with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
+                    saved.validate_material_index(changed_index)
+
+            with self.subTest(boundary="query", field=field):
+                changed_query = self.query()
+                changed_query[field] = "full_video"
+                with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
+                    saved.validate_query(changed_query)
+
+            with self.subTest(boundary="search-plan", field=field):
+                changed_plan = saved.find_material(index, self.query())
+                changed_plan[field] = "full_video"
+                with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
+                    saved.plan_missing_ranges(changed_plan)
+
+            with self.subTest(boundary="missing-range-plan", field=field):
+                missing_plan = {
+                    "fileFormatVersion": 1,
+                    "videoId": VIDEO_ID,
+                    "outputType": "summary",
+                    "outputFormat": common.OUTPUT_FORMATS["summary"],
+                    "missingTimeRanges": [{"startMs": 0, "endMs": 600_000}],
+                    field: "full_video",
+                }
+                with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
+                    saved.plan_chunks(missing_plan)
 
     def test_verification_reads_only_selected_files_and_replans_around_stale_entry(self):
         first = self.build_response(start_ms=0, end_ms=300_000)
@@ -882,7 +957,6 @@ class MaterialIndexTests(SavedResponseFixture):
                         "outputType": "transcript",
                         "outputFormat": common.OUTPUT_FORMATS["transcript"],
                         "coveredTimeRanges": [interval],
-                        "timestampsRelativeTo": "full_video",
                         "languagePolicy": {"sourceLanguage": "original"},
                     }
                 )

@@ -26,7 +26,6 @@ REQUEST_REQUIRED_FIELDS = {
 REQUEST_OPTIONAL_FIELDS = {
     "outputType",
     "outputFormat",
-    "timestampsRelativeTo",
     "languagePolicy",
 }
 RUN_REQUIRED_FIELDS = {
@@ -248,14 +247,8 @@ def validate_gemini_endpoint(endpoint, model):
     return endpoint
 
 
-def validate_reusable_metadata(
-    output_type, timestamps_relative_to=None, language_policy=None
-):
+def validate_reusable_metadata(output_type, language_policy=None):
     if output_type == "transcript":
-        if timestamps_relative_to != common.TIMESTAMPS_FULL_VIDEO:
-            raise RequestLogError(
-                "Transcript material requires full-video timestamps"
-            )
         if language_policy != {"sourceLanguage": "original"}:
             raise RequestLogError(
                 "Transcript material requires original-language policy"
@@ -575,15 +568,10 @@ def validate_request_entry(request):
         if "outputType" not in request or "outputFormat" not in request:
             raise RequestLogError("video_material requires output type and format")
         common.validate_output_format(request["outputType"], request["outputFormat"])
-        if "timestampsRelativeTo" in request:
-            _validate_non_empty_string(
-                request["timestampsRelativeTo"], "timestampsRelativeTo"
-            )
         if "languagePolicy" in request:
             common.validate_language_policy(request["languagePolicy"])
         validate_reusable_metadata(
             request["outputType"],
-            request.get("timestampsRelativeTo"),
             request.get("languagePolicy"),
         )
     else:
@@ -700,7 +688,6 @@ def _build_request_entry(
     content_class,
     output_type=None,
     output_format=None,
-    timestamps_relative_to=None,
     language_policy=None,
 ):
     validate_gemini_endpoint(endpoint, model)
@@ -728,13 +715,9 @@ def _build_request_entry(
                 raise RequestLogError(
                     "Transcript material requires the transcript-only request contract"
                 )
-        if timestamps_relative_to is not None:
-            _validate_non_empty_string(timestamps_relative_to, "timestampsRelativeTo")
         if language_policy is not None:
             common.validate_language_policy(language_policy)
-        validate_reusable_metadata(
-            output_type, timestamps_relative_to, language_policy
-        )
+        validate_reusable_metadata(output_type, language_policy)
     request_id = derive_request_id(
         inspection["normalizedRequestSha256"],
         endpoint,
@@ -758,13 +741,11 @@ def _build_request_entry(
     if content_class == "video_material":
         entry["outputType"] = output_type
         entry["outputFormat"] = output_format
-        if timestamps_relative_to is not None:
-            entry["timestampsRelativeTo"] = timestamps_relative_to
         if language_policy is not None:
             entry["languagePolicy"] = language_policy
     elif any(
         value is not None
-        for value in (output_type, output_format, timestamps_relative_to, language_policy)
+        for value in (output_type, output_format, language_policy)
     ):
         raise RequestLogError("One-time content classes cannot declare reusable output fields")
     return entry
@@ -806,7 +787,6 @@ def start_run(
     content_class,
     output_type=None,
     output_format=None,
-    timestamps_relative_to=None,
     language_policy=None,
     retry_reason=None,
     authorized_at=None,
@@ -827,7 +807,6 @@ def start_run(
         content_class,
         output_type,
         output_format,
-        timestamps_relative_to,
         language_policy,
     )
     existing_pending = [
@@ -1134,7 +1113,6 @@ def _metadata_from_args(args):
             args.output_type,
             args.output_format_name,
             args.output_format_version,
-            args.timestamps_relative_to,
             args.language_policy,
         )
         if any(value is not None for value in forbidden):
@@ -1143,7 +1121,6 @@ def _metadata_from_args(args):
             "content_class": "video_material",
             "output_type": "transcript",
             "output_format": {"name": "gemini-transcript", "version": 1},
-            "timestamps_relative_to": common.TIMESTAMPS_FULL_VIDEO,
             "language_policy": {"sourceLanguage": "original"},
         }
     if args.content_class is None:
@@ -1160,7 +1137,6 @@ def _metadata_from_args(args):
         "content_class": args.content_class,
         "output_type": args.output_type,
         "output_format": output_format,
-        "timestamps_relative_to": args.timestamps_relative_to,
         "language_policy": _load_language_policy(args.language_policy),
     }
 
@@ -1337,7 +1313,6 @@ def build_parser():
     start.add_argument("--output-type")
     start.add_argument("--output-format-name")
     start.add_argument("--output-format-version", type=int)
-    start.add_argument("--timestamps-relative-to")
     start.add_argument("--language-policy")
     start.add_argument("--retry-reason")
     start.add_argument("--authorized-at")
