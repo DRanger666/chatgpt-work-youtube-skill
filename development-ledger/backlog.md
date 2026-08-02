@@ -193,7 +193,7 @@ LEDGER-010 is governed by
     verifies only selected response files before exposing missing ranges.
   - The actual planner matches interval-union results across 5,500
     deterministic randomized cases under each validation seed.
-  - Implementation commits: `fc2dd33`, `ac15fff`, and `e92ce42`.
+  - Implementation commits: `86c02ad`, `9562b4b`, and `7c1616a`.
 
 ### LEDGER-009 — Maintain a video material index and saved Gemini responses
 
@@ -265,7 +265,7 @@ LEDGER-010 is governed by
     free-form review decisions.
   - Failed structured responses and rejected free-form responses remain saved
     but do not create false coverage.
-  - Implementation commits: `fc2dd33` and `e92ce42`.
+  - Implementation commits: `86c02ad` and `7c1616a`.
 
 ### LEDGER-010 — Log Gemini requests and prevent blind repetition
 
@@ -397,7 +397,7 @@ LEDGER-010 is governed by
   - Numbered authorized runs retain distinct outcomes, safe routing attempts,
     cooldowns, exact response bindings, and user-mediated interruption
     decisions without session-ownership machinery.
-  - Implementation commits: `1ddf84d`, `fc2dd33`, `f7f8d84`, and `ac15fff`.
+  - Implementation commits: `332c944`, `86c02ad`, `0f64b21`, and `9562b4b`.
 - Related documents:
   - [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
   - [`design/gemini-request-execution.md`](design/gemini-request-execution.md)
