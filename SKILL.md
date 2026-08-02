@@ -1,50 +1,49 @@
 ---
 name: work-with-youtube
-description: Reproducible YouTube video research using a portable local YouTube MCP server, timestamp-cited captions, saved Gemini video material, transcript-only generation for captionless sources, long-video chunking, and private Google Drive credential recovery. Use for any request to inspect, summarize, query, compare, cite, translate, transcribe, or otherwise work with one or more YouTube URLs or videos, including in a fresh Work Mode VM.
+description: Reproducible YouTube research in ChatGPT Work using MCP-first caption and metadata retrieval, saved Gemini video material, structured transcript generation, visual inspection, long-video chunking, Drive-backed request history, and private credential recovery. Use for any request to inspect, summarize, query, compare, cite, translate, transcribe, verify, or otherwise work with one or more YouTube URLs or videos, including in a fresh Work Mode VM.
 ---
 
 # Work with YouTube
 
-Use every relevant source the YouTube MCP can provide first, saved Gemini
-material second, and a new Gemini request only for information that is still
-missing. Read [references/contracts.md](references/contracts.md) before using
+For each video, use every relevant YouTube MCP result first, previously saved
+Gemini material second, and a new Gemini request only for the unresolved need.
+Read [references/contracts.md](references/contracts.md) completely before using
 Google Drive or Gemini.
 
-## Preserve these rules
+## Keep the workflow safe
 
-- Keep the portable MCP installation name `youtube-mcp-portable` and keep its
-  `materials/` and `workspace/` directories inside that installation.
-- Never print, quote, summarize, log, or commit an API key.
-- Use sufficient MCP output directly and stop. Only after the MCP path leaves
-  a real gap may the workflow search saved Gemini material, then construct a
-  new Gemini request.
-- Use only the `YouTubeVideoWork` Drive folder and file format version `1`.
-  Do not search, import, migrate, or fall back to cache-v2 files.
-- Never edit a saved Gemini response. The per-video material index is only a
-  searchable list; the per-video request log is the complete request history.
-- Never submit an identical pending request or silently repeat a terminal run.
-  Require a recorded reason for every deliberate repeat and reject unchanged
-  terminal request failures and requests whose cooldown has not expired.
-- Preserve every safe Gemini attempt returned by the router. If the router
-  stops without returning a terminal result, leave the run pending and invent
-  no attempt or outcome.
-- Do not intentionally run two Work sessions that can write for the same
-  video. Different videos can be processed concurrently; Drive does not lock
-  simultaneous same-video updates.
-- Keep Gemini chunks sequential.
+- Keep the portable installation named `youtube-mcp-portable`, with
+  `materials/` and `workspace/` inside it.
+- Never display, quote, log, or commit API keys. Keep credential files out of
+  prompts, saved responses, request logs, material indexes, `materials/`, and
+  `workspace/`.
+- Store saved Gemini work only in the private `YouTubeVideoWork` Drive folder
+  using the current file format. Do not search, import, migrate, or fall back to
+  cache-v2 files.
+- Never edit a saved Gemini response. Use the material index only to find
+  reusable responses; use the request log only to record Gemini requests and
+  their known outcomes.
+- Persist a pending numbered run before every Gemini call. Never duplicate a
+  pending run, silently repeat a finished run, ignore a recorded cooldown, or
+  retry an unchanged terminal request failure.
+- Preserve every routing attempt returned by the router. If the router does not
+  return a terminal result, keep the run pending and invent no outcome.
+- Allow only one write-capable Work session per video. Read-only work can
+  proceed elsewhere, and different videos can be processed concurrently.
+- Run Gemini chunks sequentially.
 
-## Start or recover the local MCP
+## Prepare the local YouTube MCP
 
-Set `skill_dir` to this skill directory, then run:
+Set `skill_dir` to this skill directory, then discover or restore the pinned
+portable installation:
 
 ```sh
 install=$(sh "$skill_dir/scripts/ensure_youtube_mcp.sh" \
   --search-root /workspace \
-  --install-parent "$PWD")
+  --install-parent /workspace)
 ```
 
-The script discovers and verifies an existing compatible installation before
-rebuilding the pinned server. Call it deterministically:
+Verify the server and enumerate its current tools:
 
 ```sh
 "$install/runtime/bin/node" "$skill_dir/scripts/call_youtube_mcp.mjs" \
@@ -52,140 +51,141 @@ rebuilding the pinned server. Call it deterministically:
 ```
 
 Put complex MCP arguments in a JSON file under `$install/workspace/`. For
-`research-video` and `research-videos`, use `--structured-only`. Paginate broad
-transcript reads with `offset` and `maxSegments`; prefer a focused query.
+`research-video` and `research-videos`, use `--structured-only`. Paginate
+broad transcript reads with `offset` and `maxSegments`; prefer focused
+queries.
 
-## Choose the least expensive route
+## Resolve the task in source order
 
-1. Normalize the URL to a YouTube video ID.
-2. Call the relevant MCP tools for available captions, transcript research,
-   metadata, or other applicable YouTube information. If that material
-   satisfies the task, use it directly and stop. MCP output remains temporary;
-   do not copy it into the Gemini material index.
-3. When information remains missing, locate the video's Gemini material index
-   and saved responses in `YouTubeVideoWork`. Search compatible index entries
-   and verify only the selected response files.
-4. Reuse sufficient verified material. Construct requests only for returned
-   missing time ranges.
-5. Use Gemini when MCP output and saved Gemini material are inadequate, visual
-   evidence matters, or the user requests whole-video understanding.
-6. Process each video independently before comparing several videos.
-
-A YouTube Data API key does not grant access to unavailable captions; caption
-download normally requires permission to edit the video.
+1. Normalize each URL to its YouTube video ID.
+2. Ask the MCP for every relevant caption, transcript-research, metadata, or
+   other applicable result. If this satisfies the task, answer from it and
+   stop. Keep MCP results temporary; do not copy them into the Gemini material
+   index.
+3. For anything still missing, search the video's saved Gemini material.
+4. Reuse sufficient verified material. Plan a Gemini request only for returned
+   missing time ranges or sensory information absent from both earlier sources.
+5. Process videos independently before comparing or synthesizing them.
 
 ## Search saved Gemini material
 
-The three durable Drive filenames are:
+Use `scripts/saved_gemini_responses.py` and the exact Drive filenames and JSON
+fields defined in the contract.
 
-- `<videoId>--video-material-index.json`
-- `<videoId>--gemini-response--<outputType>--<savedResponseId>.json`
-- `<videoId>--gemini-requests.json`
+1. Run `locate --video VIDEO`, then look up the exact material-index filename
+   in `YouTubeVideoWork`.
+2. If the index is absent, enumerate that video's saved-response filenames.
+   Rebuild the index when responses exist. Initialize an empty index only after
+   confirming that none exist.
+3. Build a query for the video, controlled output type and format, and requested
+   half-open millisecond ranges. Run `find-material` against the local index.
+4. Download only `savedResponseIdsToFetch`, then run `verify-selected`.
+   Re-fetch and re-verify only replacements returned after stale or invalid
+   selections are removed.
+5. Run `plan-missing-ranges` only after verification. Do not construct a
+   Gemini request for covered time.
 
-Use `scripts/saved_gemini_responses.py`.
+Reusable material has exactly four output types:
 
-1. Run `locate --video VIDEO` and find the exact material-index filename.
-2. If it is absent, enumerate that video's saved-response filenames. Run
-   `rebuild-material-index` when responses exist. Run `init-material-index
-   --confirmed-no-saved-responses` only after confirming none exist.
-3. Create a query containing the video, controlled output type, compatible
-   output format, and requested half-open millisecond ranges. Run
-   `find-material` against the local index.
-4. Download only files listed in `savedResponseIdsToFetch`, then run
-   `verify-selected`. If selected files are missing, stale, or invalid, fetch
-   only any replacements in the new plan and verify again.
-5. Run `plan-missing-ranges` only on a verified plan. Build no Gemini request
-   for covered time.
+- `transcript`: `gemini-transcript` version `1`, checked mechanically.
+- `summary`, `systematic_visual_description`, and
+  `systematic_onscreen_text`: `gemini-free-form-text` version `1`, admitted
+  to the index only after ChatGPT review and conservative assignment of covered
+  time within the requested source range.
 
-The controlled reusable outputs are `transcript`, `summary`,
-`systematic_visual_description`, and `systematic_onscreen_text`. Transcript
-uses `gemini-transcript` version `1`; the other three use
-`gemini-free-form-text` version `1`. Free-form material enters the index only
-after ChatGPT reviews it and supplies conservative covered time within the
-requested source range. Ask transcript mode to preserve the original spoken
-language and native script. Ask systematic onscreen-text requests to reproduce
-the text and script visible in the video, without translating them.
+When rebuilding an index, supply explicit admission decisions for every
+free-form response as defined in the contract. Keep structurally invalid
+transcript responses saved but unindexed.
 
-Do not save or search translations as reusable Gemini output. Translate on
-demand in ChatGPT from saved source-language transcripts or source onscreen
-text. Do not add a top-level language field or split saved material into
-language variants; multilingual evidence stays in the response content.
+Do not save or search translations. Translate on demand in ChatGPT from MCP
+material or saved source-language transcripts and onscreen text. Preserve
+multilingual evidence in the source content itself.
 
-During rebuilding, the `--free-form-admissions` JSON records `admitted: true`
-with covered time for material accepted after review, or only
-`admitted: false` for a reviewed response that should remain unindexed. A
-failed structured response also remains saved but is skipped by rebuilding.
+## Use Gemini for the remaining video access
 
-## Use Gemini as a video sensor
+Use Gemini as a video sensor and keep reasoning in ChatGPT. Prefer prompts that
+ask Gemini to report what is visible or audible: a board, slide, onscreen text,
+scene, action, or other specific evidence.
 
-ChatGPT remains responsible for reasoning and the final answer. Use Gemini for
-video access that the MCP and ChatGPT do not provide: seeing a board or slide,
-reading onscreen text, describing a scene, or checking another specific visual
-fact.
+Classify the requested result before building it:
 
-Before the call, classify the requested result:
+- `video_material`: systematic source material worth reusing. Save it under
+  one controlled output type.
+- `task_specific_observation`: narrow sensory evidence for the current task.
+  Return it to ChatGPT and do not save its response text to Drive.
+- `direct_answer`: Gemini's task-specific answer, used only when actually
+  wanted. Return it without saving its response text to Drive.
 
-- Request systematic, broadly reusable source material as `video_material` and
-  save it under one controlled output type.
-- Request narrow sensory evidence for the current task as
-  `task_specific_observation`; return it to ChatGPT and do not retain the
-  response text.
-- Use `direct_answer` only when Gemini's own task-specific answer is actually
-  wanted; do not retain its response text.
+Do not turn a narrow question into reusable material merely to retain it.
+Successful one-time requests still receive a verified request-log outcome.
 
-Do not turn a narrow question into a reusable category merely to preserve it.
-Prefer a sensory prompt that asks Gemini to report what is visible or audible;
-perform the consequential interpretation in ChatGPT.
+## Plan only missing video ranges
 
-## Request exact wording from Gemini
+Split a verified missing-range plan with `plan-chunks`. Use the transcript and
+general-analysis chunk sizes and overlaps defined in the contract:
 
-When captions are absent or inadequate and source wording matters, build the
-tested transcript-only request:
+```sh
+python3 "$skill_dir/scripts/saved_gemini_responses.py" plan-chunks \
+  --missing-ranges-plan MISSING_RANGES_JSON \
+  --chunk-seconds CHUNK_SECONDS \
+  --overlap-seconds OVERLAP_SECONDS \
+  --output CHUNK_PLAN_JSON
+```
+
+Build each returned chunk with one of these routes:
 
 ```sh
 python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
-  --video-url VIDEO_URL \
-  --start-seconds START \
-  --end-seconds END \
-  --transcript-only \
-  --output REQUEST_JSON
+  --video-url VIDEO_URL --start-seconds START --end-seconds END \
+  --transcript-only --output REQUEST_JSON
 ```
 
-This mode requests only audible linguistic content in the original language
-and defaults to 8192 output tokens. Its `MM:SS.mmm` fields are video-start
-offsets whose minute part has at least two digits and may exceed 99.
+```sh
+python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
+  --video-url VIDEO_URL --start-seconds START --end-seconds END \
+  --prompt PROMPT --output REQUEST_JSON
+```
 
-For long material, feed the verified missing-range plan to `plan-chunks` with
-`--chunk-seconds 600 --overlap-seconds 4`. If a response is incomplete or
-truncated, save it normally and index only mechanically validated covered
-time. Request its unfinished range with smaller clips, creating a new request.
-Never repeat the identical request as truncation recovery.
+Transcript mode requests only audible linguistic content in the original
+language and native script. Its timestamps, every millisecond range, and every
+chunk boundary are offsets from the beginning of the video.
 
-## Run one Gemini request safely
+Start long-video work with one representative clip and continue sequentially
+only after it succeeds. If video ingestion or output fails, reduce the chunk
+size instead of assuming the documented default is an API limit.
 
-Classify the response before starting:
+If transcript output is incomplete or truncated, save it and index only the
+mechanically checked covered range. Plan smaller clips for the remaining range.
+Never repeat the identical request as truncation handling.
 
-- `video_material`: reusable source material; declare a controlled output type
-  and format and save the response.
-- `task_specific_observation`: evidence for the current question only; return
-  it to the conversation and do not save the response text.
-- `direct_answer`: a current-task answer only; return it and do not save its
-  text.
+## Load Gemini credentials privately
 
-Use `scripts/gemini_request_log.py` and replace the corresponding Drive file
-after every successful local log update.
+Use the connected Google Drive app and the exact credential location in the
+contract. Retrieve the file without displaying its bytes, materialize it at
+`$install/config/youtube-workbench-secrets.env` with mode `0600`, and load
+only `GEMINI_API_KEY` and `GEMINI_API_KEY_FALLBACK` into the router process
+environment.
 
-1. Locate `<videoId>--gemini-requests.json`. Run `init-log
-   --confirmed-no-log` only after exact-name lookup confirms it is
-   absent.
-2. Recheck the material index immediately before an unavoidable request.
-3. Build the exact request file, then run `start-run`. Use `--transcript` for a
-   transcript-only request; otherwise declare `--content-class` and, for
-   reusable material, its controlled output fields. Record `--retry-reason`
-   only when the user deliberately authorizes another run.
-4. Upload the pending request log before selecting credentials.
-5. Run the router with the same request-log path, request ID, run number,
-   endpoint, model, and method:
+The router uses the primary project first and the fallback project only when
+the primary is unavailable. Duplicate values form one bucket. If Drive access
+is unavailable, stop and ask the user to connect it.
+
+## Run one logged Gemini request
+
+Use `scripts/gemini_request_log.py` for the per-video request log and replace
+the corresponding Drive file after every successful local log update.
+
+1. Run `locate --video VIDEO` and look up the exact request-log filename.
+   Initialize a log only after confirming that no exact-name file exists.
+2. Recheck saved material immediately before the call. Stop if nothing remains
+   missing.
+3. Build the exact request, then run `start-run`. Use `--transcript` for
+   transcript mode; otherwise declare the content class and, for reusable
+   material, its controlled output type and format. Add `--retry-reason` only
+   when the user deliberately authorizes another run.
+4. Upload the pending request log before invoking the router.
+5. Run the router with the same request log, request ID, run number, endpoint,
+   model, method, and exact request file:
 
 ```sh
 python3 "$skill_dir/scripts/gemini_request.py" \
@@ -198,92 +198,42 @@ python3 "$skill_dir/scripts/gemini_request.py" \
   --state "$install/workspace/gemini-keypool-state.json"
 ```
 
-The router verifies the exact pending request before loading credentials. It
-uses `primary` first, bounded retries for transient failures, and `fallback`
-only when the primary project is unavailable. It never rotates on a terminal
-request error. Keep only bucket aliases in saved state.
+6. For a returned terminal failure, run `finish-run` with the router result,
+   upload the updated request log, and save no response.
+7. For successful `video_material`, run `save-response`; upload the immutable
+   response; run `finish-run` with the saved response and its Drive file ID;
+   and upload the updated request log. Add checked or reviewed material to the
+   index afterward, then upload the index. Never index malformed transcript
+   output or unreviewed free-form output.
+8. For successful one-time content, run `finish-run` with the router result
+   and exact local response file. It records that response storage was
+   deliberately omitted. Do not upload the response text.
 
-6. On failure, run `finish-run` with the returned router result and upload the
-   updated request log. Do not create a saved response.
-7. On successful `video_material`, run `save-response`. Upload the immutable
-   response to Drive, run `finish-run` with its local path and Drive file ID,
-   then add an eligible response to the material index. Upload the request log
-   before uploading the updated material index.
-8. On successful one-time content, run `finish-run` with the router result and
-   exact response file. It verifies success and records
-   `responseNotSavedByPolicy`; do not upload the response text.
+The log keeps one logical request with numbered authorized runs. Each run keeps
+its own exact request hash, authorization, returned routing attempts, cooldown,
+status, and saved-response reference when applicable. Earlier runs are never
+overwritten.
 
-The request log keeps one stable request entry with numbered runs beneath it;
-each run keeps its own authorization, attempts, cooldown, status, and result
-reference. Earlier runs are never overwritten.
+## Resolve an interrupted pending run
 
-## Handle an interrupted pending run
+Never infer an outcome from elapsed time.
 
-Do not infer an outcome from elapsed time.
+1. Ask the user to confirm that the earlier write-capable session stopped.
+2. For reusable material, enumerate and download every saved response that
+   could claim the pending run, then pass every candidate path to `finish-run`
+   with both interruption confirmations. The command completes the run only
+   when exactly one file verifies the request ID, run number, exact request
+   hash, response bytes, and router result.
+3. If no exact response exists, or the interrupted run requested one-time
+   content, use `mark-run-interrupted` only after confirmation. Any later run
+   still requires explicit retry authorization.
+4. If multiple responses claim the run or any binding conflicts, stop and
+   investigate.
 
-- Ask the user to confirm that the earlier session stopped.
-- For reusable video material, enumerate all saved responses for that video.
-  If exactly one valid file identifies the same request ID, run number, and
-  exact request hash, call `finish-run` with every candidate path plus
-  `--confirmed-session-stopped --confirmed-response-enumeration`; this finishes
-  the existing run without another Gemini call.
-- If no exact saved response exists, or the interrupted run was one-time
-  content, use `mark-run-interrupted` only after user confirmation. A later run
-  still needs explicit retry authorization.
-- If multiple responses claim the same run or any binding fails, stop and
-  investigate.
+## Deliver the answer
 
-## Chunk other long requests
-
-Build requests only for verified missing ranges. Split the output of
-`plan-missing-ranges` deterministically:
-
-```sh
-python3 "$skill_dir/scripts/saved_gemini_responses.py" plan-chunks \
-  --missing-ranges-plan MISSING_RANGES_JSON \
-  --chunk-seconds 1800 \
-  --output CHUNK_PLAN_JSON
-```
-
-Thirty minutes with no overlap is the tested conservative operating default
-for general video analysis, not a claimed Gemini API maximum. Add a small
-overlap only when boundary continuity matters. Start with one representative
-clip and expand sequentially only after it succeeds. If ingestion or output
-fails, reduce the chunk size.
-
-Build each request from one returned chunk:
-
-```sh
-python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
-  --video-url VIDEO_URL \
-  --start-seconds START \
-  --end-seconds END \
-  --prompt PROMPT \
-  --output REQUEST_JSON
-```
-
-Treat every returned `startMs` and `endMs` as a millisecond offset from the
-beginning of the video. Save each reusable response separately; synthesize from
-reused material in ChatGPT unless a distinct reusable Gemini output is actually
-needed.
-
-## Recover Gemini credentials privately
-
-Use the connected Google Drive app and the exact credential contract in
-`references/contracts.md`. Retrieve the file without displaying its bytes and
-materialize it as `$install/config/youtube-workbench-secrets.env` with mode
-`0600`. Never place it in a prompt, tool argument, saved response, request log,
-material index, repository, `materials/`, or `workspace/`.
-
-The file can contain `GEMINI_API_KEY` and a separately provisioned
-`GEMINI_API_KEY_FALLBACK`. Gemini quota is project-level; duplicate values are
-one bucket. If Drive authorization is unavailable, stop and ask the user to
-connect it.
-
-## Deliver research
-
-- Cite caption claims with timestamped YouTube links.
-- Label Gemini-derived claims and include timestamps when available.
-- Distinguish observation, inference, and uncertainty.
+- Cite caption-derived claims with timestamped YouTube links.
+- Label Gemini-derived observations and include timestamps when available.
+- Distinguish direct observation, inference, and uncertainty.
 - State when only part of a long video was processed.
 - Mention saved-material reuse when it prevented a Gemini call.
