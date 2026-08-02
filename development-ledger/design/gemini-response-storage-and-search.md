@@ -21,8 +21,9 @@ paths, and current file fields are summarized for the running skill in
 
 The implementation is validated offline without creating live files in
 `YouTubeVideoWork` or consuming Gemini generation quota. LEDGER-014 removed the
-redundant per-record timestamp-coordinate field from request logging, saved
-responses, material indexes, and search before live v3 use.
+redundant per-record timestamp-coordinate field before live v3 use. LEDGER-015
+removes top-level language-policy metadata: reusable responses preserve source
+language in their content, and ChatGPT translates that material on demand.
 
 The design replaces the request-byte lookup and the later artifact/manifest
 model. Cache-v2 files remain outside this system and are not imported,
@@ -37,8 +38,8 @@ The saved-material system answers two questions:
    range, or must the skill request missing material from Gemini?
 
 Prompt wording and request-file serialization are not material search keys.
-The system searches by video, controlled output type, output format, applicable
-language requirements, and checked covered time.
+The system searches by video, controlled output type, output format, and
+checked covered time.
 
 ## Drive files
 
@@ -66,7 +67,6 @@ A saved response contains:
 - fixed `contentClass`, controlled `outputType`, and compatible
   `outputFormat`;
 - the exact requested `sourceTimeRange`;
-- applicable `languagePolicy`;
 - the complete safe `routerResult` retained from the matching run;
 - `responseSha256` and the exact UTF-8 response text in `responseJsonText`;
 - `formatCheck` exactly when the registered output format has a deterministic
@@ -102,7 +102,6 @@ Its top-level fields are `fileFormatVersion`, `videoId`, `materials`, and
   SHA-256;
 - controlled `outputType` and `outputFormat`;
 - checked `coveredTimeRanges`;
-- applicable language policy; and
 - a concise `materialDescription` when the output type alone is insufficient.
 
 The index never contains prompts, request IDs, run numbers, Gemini status,
@@ -139,9 +138,15 @@ The reusable output registry is intentionally small:
 | `systematic_visual_description` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 | `systematic_onscreen_text` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 
-Reject every unregistered type, format, or type-format pairing. Translation is
-derived on demand by ChatGPT from original-language transcripts or systematic
-onscreen text; it is not saved, indexed, or searched as a Gemini output.
+Reject every unregistered type, format, or type-format pairing. Transcript
+requests preserve the original spoken language and native script. Systematic
+onscreen-text requests preserve the text and script visible in the video.
+Translation is derived on demand by ChatGPT from that saved source material;
+it is not saved, indexed, or searched as a Gemini output.
+
+Do not store a top-level language policy or video-wide language label. Actual
+multilingual and code-switching evidence remains in the saved content,
+including the `language` value on each transcript segment.
 
 `gemini-free-form-text` promises ordinary text, not a machine-readable
 structure. It has no `formatCheck`. ChatGPT reads it once before admission and
@@ -170,21 +175,19 @@ through a separate design decision.
 ## Searching saved Gemini material
 
 The caller supplies normalized video identity, controlled output type,
-compatible output format, requested half-open millisecond ranges, and any
-applicable language requirement.
+compatible output format, and requested half-open millisecond ranges.
 
 Search in this order:
 
 1. Open the predictable per-video material index.
 2. Filter entries by output type and output-format version.
-3. Apply the declared language requirement when one exists.
-4. Calculate exact, containing, or combined coverage from the readable index.
-5. Select the smallest suitable set of entries and return their saved-response
+3. Calculate exact, containing, or combined coverage from the readable index.
+4. Select the smallest suitable set of entries and return their saved-response
    IDs plus any missing ranges.
-6. Download only selected files and verify each stored-file hash, response ID,
+5. Download only selected files and verify each stored-file hash, response ID,
    response hash, and immutable metadata.
-7. Replan around any missing, stale, or invalid selected file.
-8. Expose missing ranges for new Gemini request construction only after the
+6. Replan around any missing, stale, or invalid selected file.
+7. Expose missing ranges for new Gemini request construction only after the
    selected files have been verified.
 
 The missing-range output is the only input accepted by the deterministic
@@ -275,6 +278,9 @@ or response-retention machinery without observed need and a new design review.
 - request/response clip mismatch and false-coverage rejection;
 - rejection of every removed timestamp-coordinate field at request-log,
   saved-response, material-index, and material-query boundaries;
+- rejection of removed language-policy fields at the same public boundaries;
+- preservation of transcript segment language values and original visible text
+  without top-level language metadata or language-fragmented search;
 - response-byte, saved-response identity, and stored-file integrity checks;
 - no saved response or index entry for either one-time content class; and
 - complete isolation from cache v2.
