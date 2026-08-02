@@ -72,6 +72,8 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
 
+## Completed refinements
+
 ### LEDGER-014 — Remove redundant timestamp-coordinate metadata
 
 - Status: Completed
@@ -211,8 +213,6 @@ feature, investigation, design, and refinement work.
 - Related documents:
   - [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
   - [`../references/contracts.md`](../references/contracts.md)
-
-## Completed refinements
 
 ### LEDGER-013 — Clarify documentation ownership and restore long-video planning
 
