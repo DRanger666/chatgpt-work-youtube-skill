@@ -177,13 +177,15 @@ deliberately asymmetric:
 | `systematic_visual_description` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 | `systematic_onscreen_text` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 
-Reject any other type, format, or type-format pairing. Transcript uses
-original-language content. All `startMs` and `endMs` values are millisecond
-offsets from the beginning of the YouTube video. The `MM:SS.mmm` fields defined
-by `gemini-transcript` version `1` represent the same video-start offsets.
-Translate on demand in ChatGPT from saved original-language transcripts or
-systematic onscreen text; do not save or search translation as a reusable
-Gemini output.
+Reject any other type, format, or type-format pairing. Transcript uses the
+original spoken language and native script. Systematic onscreen text preserves
+the text and script visible in the video. All `startMs` and `endMs` values are
+millisecond offsets from the beginning of the YouTube video. The `MM:SS.mmm`
+fields defined by `gemini-transcript` version `1` represent the same video-start
+offsets. Translate on demand in ChatGPT from saved source-language transcripts
+or source onscreen text; do not save or search translation as a reusable Gemini
+output. Do not store a top-level language field or divide material into
+language variants.
 
 `task_specific_observation` and `direct_answer` are one-time content classes.
 Their response text is returned to the current conversation and is not written
@@ -198,7 +200,7 @@ from one numbered run. Its format version is `1` and it contains:
 - normalized `videoId`;
 - `savedResponseId`, `requestId`, `runNumber`, and `exactRequestSha256`;
 - fixed `contentClass`, controlled `outputType`, and compatible `outputFormat`;
-- exact requested `sourceTimeRange` and applicable `languagePolicy`;
+- exact requested `sourceTimeRange`;
 - the complete safe `routerResult`;
 - `responseSha256` and the exact UTF-8 Gemini response file text in
   `responseJsonText`;
@@ -232,17 +234,16 @@ The material index is a small search file with only:
 
 Each material entry contains its `savedResponseId`, Drive file ID, predictable
 filename, exact stored-file SHA-256, output type and format, and covered time
-ranges. An applicable language policy and a concise reviewed material
-description can also appear. Request IDs, run numbers, prompts, router attempts,
-retry reasons, cooldowns, and request status do not belong here.
+ranges. A concise reviewed material description can also appear. Request IDs,
+run numbers, prompts, router attempts, retry reasons, cooldowns, and request
+status do not belong here.
 
 Search the readable index fields before downloading response files. Match
-output type, format, applicable language policy, and half-open millisecond
-coverage. The planner supports exact, containing, combined, overlapping,
-partial, incompatible, and missing coverage. It returns only selected saved
-response IDs and remaining ranges. Download and verify only selected files;
-replan around missing, stale, or invalid selections before constructing a
-request.
+output type, format, and half-open millisecond coverage. The planner supports
+exact, containing, combined, overlapping, partial, incompatible, and missing
+coverage. It returns only selected saved response IDs and remaining ranges.
+Download and verify only selected files; replan around missing, stale, or
+invalid selections before constructing a request.
 
 Every distinct saved response ID is retained even when its type and interval
 match another entry. Transcript coverage comes only from the checker.

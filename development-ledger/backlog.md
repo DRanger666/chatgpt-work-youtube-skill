@@ -138,7 +138,7 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-015 — Remove language-policy metadata
 
-- Status: Planned
+- Status: Completed
 - Type: Design correction and implementation
 - Layer: Gemini request metadata, response storage, material indexing, and
   search
@@ -173,24 +173,37 @@ feature, investigation, design, and refinement work.
     different presentation language is needed, ChatGPT derives it from the
     saved material at use time.
 - Required implementation:
-  - [ ] Correct the governing storage/search design before changing runtime
+  - [x] Correct the governing storage/search design before changing runtime
         code.
-  - [ ] Remove the field from request-log fields, request construction APIs,
+  - [x] Remove the field from request-log fields, request construction APIs,
         command-line arguments, validators, and immutable-metadata checks.
-  - [ ] Remove it from saved responses, saved-response identity,
+  - [x] Remove it from saved responses, saved-response identity,
         material-index entries, index rebuilding, material queries, filtering,
         returned search data, missing-range output, and chunk output.
-  - [ ] Keep original-language transcript and onscreen-text requirements in
+  - [x] Keep original-language transcript and onscreen-text requirements in
         their output instructions or format contract rather than representing
         them as stored search metadata.
-  - [ ] Update `SKILL.md`, `references/contracts.md`, active design material,
+  - [x] Update `SKILL.md`, `references/contracts.md`, active design material,
         examples, and tests. Preserve completed historical ledger records.
-  - [ ] Add offline tests that reject the removed field at public file and
+  - [x] Add offline tests that reject the removed field at public file and
         command boundaries, retain transcript segment language content, save
         source onscreen text without language-policy metadata, and perform
         material search without language-based fragmentation.
-  - [ ] Run the complete offline suite and skill-package validation without
+  - [x] Run the complete offline suite and skill-package validation without
         Gemini calls or live Drive writes.
+- Outcome:
+  - Commit `e360e8f` removed language metadata from the governing saved-material
+    model before runtime changes.
+  - Commit `d8c2fe4` removed the validator, Python and command interfaces,
+    request-log field, saved-response and identity field, material-index field,
+    query condition, and language-fragmented compatibility check.
+  - Transcript requests retain the tested original-language prompt, transcript
+    segment `language` values remain stored content, and source onscreen text
+    is saved and reused without a top-level language label.
+  - Removed metadata is rejected at every tested request-log, saved-response,
+    material-index, query, search-plan, missing-range, and chunk boundary.
+  - All 81 offline tests and skill-package validation passed without Gemini or
+    Drive mutation.
 - Completion rule: Close this item only when the removed active identifiers no
   longer occur in runtime code, current contracts, active examples, or tests;
   their appearance inside preserved historical evidence does not count as

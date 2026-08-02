@@ -89,8 +89,8 @@ Use `scripts/saved_gemini_responses.py`.
    `rebuild-material-index` when responses exist. Run `init-material-index
    --confirmed-no-saved-responses` only after confirming none exist.
 3. Create a query containing the video, controlled output type, compatible
-   output format, requested half-open millisecond ranges, and any applicable
-   language policy. Run `find-material` against the local index.
+   output format, and requested half-open millisecond ranges. Run
+   `find-material` against the local index.
 4. Download only files listed in `savedResponseIdsToFetch`, then run
    `verify-selected`. If selected files are missing, stale, or invalid, fetch
    only any replacements in the new plan and verify again.
@@ -102,11 +102,14 @@ The controlled reusable outputs are `transcript`, `summary`,
 uses `gemini-transcript` version `1`; the other three use
 `gemini-free-form-text` version `1`. Free-form material enters the index only
 after ChatGPT reviews it and supplies conservative covered time within the
-requested source range.
+requested source range. Ask transcript mode to preserve the original spoken
+language and native script. Ask systematic onscreen-text requests to reproduce
+the text and script visible in the video, without translating them.
 
 Do not save or search translations as reusable Gemini output. Translate on
-demand in ChatGPT from saved original-language transcripts or systematic
-onscreen text.
+demand in ChatGPT from saved source-language transcripts or source onscreen
+text. Do not add a top-level language field or split saved material into
+language variants; multilingual evidence stays in the response content.
 
 During rebuilding, the `--free-form-admissions` JSON records `admitted: true`
 with covered time for material accepted after review, or only
