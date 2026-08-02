@@ -247,7 +247,11 @@ class RequestLogTests(unittest.TestCase):
                 language_policy={"sourceLanguage": "original"},
                 started_at=T0,
             )
-        with self.assertRaisesRegex(request_log.RequestLogError, "targetLanguage"):
+
+    def test_translation_is_not_a_reusable_output_type(self):
+        with self.assertRaisesRegex(
+            common.YouTubeWorkError, "Unsupported reusable output type"
+        ):
             request_log.start_run(
                 self.new_log(),
                 self.request_path,
@@ -258,7 +262,6 @@ class RequestLogTests(unittest.TestCase):
                 "video_material",
                 output_type="translation",
                 output_format={"name": "gemini-free-form-text", "version": 1},
-                language_policy={"sourceLanguage": "hi"},
                 started_at=T0,
             )
 

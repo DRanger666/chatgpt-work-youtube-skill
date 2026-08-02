@@ -72,6 +72,27 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
 
+## Completed refinements
+
+### LEDGER-012 — Derive translations instead of storing them
+
+- Status: Completed
+- Type: Refinement
+- Layer: Reusable video material
+- Evidence: Translation can be produced on demand by ChatGPT from saved
+  original-language transcripts or systematic onscreen text. Saving and
+  searching a separate Gemini translation duplicates derived material without
+  recovering information that ChatGPT otherwise lacks.
+- Outcome:
+  - Removed `translation` from the controlled reusable-output registry before
+    any live v3 use.
+  - Rejected translation in request logging, response saving, material-index
+    admission, and search through the shared controlled registry.
+  - Retained on-demand translation as a ChatGPT consumption step over saved
+    source-language material.
+- Related document:
+  [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
+
 ## Completed Gemini-response and video-material release corrections
 
 The earlier implementation remains useful evidence, but its public names and

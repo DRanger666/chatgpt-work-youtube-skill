@@ -55,6 +55,10 @@ no-space `YouTubeVideoWork` Drive folder. The request log prevents blind
 repetition without being used as a material-discovery key. This clean-slate
 system does not import, migrate, or fall back to cache-v2 records.
 
+Translations are derived on demand in ChatGPT from saved original-language
+transcripts or systematic onscreen text. They are not stored or searched as a
+separate reusable Gemini output.
+
 For interactive continuity, the skill can use a second credential belonging to
 a different Google Cloud project. It remains primary-first and sequential:
 the fallback is used only when the primary project is cooling down or

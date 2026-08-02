@@ -122,14 +122,15 @@ deliberately asymmetric:
 | `outputType` | `outputFormat` | Validation |
 | --- | --- | --- |
 | `transcript` | `gemini-transcript` version `1` | Deterministic structured check |
-| `translation` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 | `summary` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 | `systematic_visual_description` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 | `systematic_onscreen_text` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 
-Reject any other type, format, or type-format pairing. Translation requires
-both source and target languages. Transcript uses original-language content
-and `timestampsRelativeTo: "full_video"`.
+Reject any other type, format, or type-format pairing. Transcript uses
+original-language content and `timestampsRelativeTo: "full_video"`.
+Translate on demand in ChatGPT from saved original-language transcripts or
+systematic onscreen text; do not save or search translation as a reusable
+Gemini output.
 
 `task_specific_observation` and `direct_answer` are one-time content classes.
 Their response text is returned to the current conversation and is not written

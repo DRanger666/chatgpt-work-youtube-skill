@@ -260,13 +260,6 @@ def validate_reusable_metadata(
             raise RequestLogError(
                 "Transcript material requires original-language policy"
             )
-    elif output_type == "translation":
-        policy = common.validate_language_policy(language_policy)
-        for field in ("sourceLanguage", "targetLanguage"):
-            if not isinstance(policy.get(field), str) or not policy[field].strip():
-                raise RequestLogError(
-                    f"Translation material requires {field}"
-                )
 
 
 def validate_attempt(attempt, expected_number=None, previous=None):

@@ -93,12 +93,16 @@ Use `scripts/saved_gemini_responses.py`.
 5. Run `plan-missing-ranges` only on a verified plan. Build no Gemini request
    for covered time.
 
-The controlled reusable outputs are `transcript`, `translation`, `summary`,
+The controlled reusable outputs are `transcript`, `summary`,
 `systematic_visual_description`, and `systematic_onscreen_text`. Transcript
-uses `gemini-transcript` version `1`; the other four use
+uses `gemini-transcript` version `1`; the other three use
 `gemini-free-form-text` version `1`. Free-form material enters the index only
 after ChatGPT reviews it and supplies conservative covered time within the
 requested source range.
+
+Do not save or search translations as reusable Gemini output. Translate on
+demand in ChatGPT from saved original-language transcripts or systematic
+onscreen text.
 
 During rebuilding, the `--free-form-admissions` JSON records `admitted: true`
 with covered time for material accepted after review, or only

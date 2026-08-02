@@ -225,13 +225,6 @@ def _validate_source_time_range(value):
     return value
 
 
-def _validate_translation_policy(policy):
-    policy = common.validate_language_policy(policy)
-    for field in ("sourceLanguage", "targetLanguage"):
-        if not isinstance(policy.get(field), str) or not policy[field].strip():
-            raise SavedResponseError(f"Translation language policy requires {field}")
-
-
 def _saved_response_identity_fields(saved_response):
     identity = dict(saved_response)
     identity.pop("savedResponseId", None)
@@ -287,8 +280,6 @@ def validate_saved_response(saved_response):
             raise SavedResponseError("Transcript timestamps must be relative to full_video")
         if "languagePolicy" not in saved_response:
             raise SavedResponseError("Transcript saved response requires languagePolicy")
-    if output_type == "translation":
-        _validate_translation_policy(saved_response.get("languagePolicy"))
     router_result = request_log.validate_router_result(
         dict(saved_response["routerResult"])
     )

@@ -22,8 +22,9 @@
 ## Status
 
 This document replaces the earlier cache-v3 and single-writer designs. The
-reduced design is implemented on `feat/artifact-cache-v3` through `e92ce42`
-and validated offline. The branch remains unmerged, the installed skill is
+reduced design, including LEDGER-012's removal of translation from saved and
+searchable reusable outputs, is implemented on `feat/artifact-cache-v3` and
+validated offline. The branch remains unmerged, the installed skill is
 unchanged, and no live Drive files or Gemini requests were created during
 implementation.
 
@@ -31,7 +32,7 @@ The audited code at `b8598e4` and the design correction at `f65a965` remain
 useful development history. They are not the implementation specification.
 
 The replacement uses the required scripts, commands, filenames, JSON fields,
-and plain operational vocabulary without compatibility wrappers. Seventy-one
+and plain operational vocabulary without compatibility wrappers. Seventy-two
 offline tests pass under four Python hash seeds, including 5,500 actual
 material-planner interval cases per run. A representative live validation and
 any later cache-v2 cleanup remain separately authorized work.
@@ -43,8 +44,8 @@ needlessly repeating Gemini requests.
 
 It must support these ordinary situations:
 
-1. Find reusable transcripts, translations, summaries, descriptions, and
-   systematic visual records already saved for a video.
+1. Find reusable transcripts, summaries, descriptions, and systematic visual
+   records already saved for a video.
 2. Decide whether that video material covers the user's current need and time
    range.
 3. Process only missing time ranges.
@@ -171,8 +172,9 @@ check, safe router result, or returned content changes the ID. Two authorized
 runs have different saved-response IDs even when Gemini returns identical
 bytes; `responseSha256` still reveals that their returned content is
 identical. Because controlled `outputType` and `outputFormat` are included in
-the immutable saved fields, a transcript, translation, and summary for the
-same video range always receive different saved-response IDs.
+the immutable saved fields, a transcript, summary, and systematic onscreen
+text response for the same video range always receive different
+saved-response IDs.
 
 The response-saving command accepts the router result produced by
 `gemini_request.py` and verifies that its request ID, run number, and exact
@@ -220,10 +222,13 @@ one `outputType` from this initial list:
 | `outputType` | Reusable content |
 |---|---|
 | `transcript` | Spoken words in the source language, with the declared timestamp policy |
-| `translation` | A translation of spoken or written video content, with explicit source and target languages |
 | `summary` | A reusable condensed account of the declared video range |
 | `systematic_visual_description` | A chronological, reusable record of visible scenes, objects, and actions |
 | `systematic_onscreen_text` | Reusable extraction of text shown on slides, boards, charts, captions, or other visible surfaces |
+
+Translation is derived material. ChatGPT translates on demand from a saved
+original-language transcript or systematic onscreen text; the system does not
+save or search translation as a reusable Gemini output.
 
 `outputType` is not an arbitrary caller-supplied category. A new reusable
 output type enters this list only through a design update that defines its
@@ -495,9 +500,9 @@ each response ID and response hash. Rerun the registered checker for a
 structured format; inspect a free-form response before admitting it again.
 Create an empty index only after confirming that no saved `video_material`
 response can be indexed. Rebuilding adds every eligible distinct
-`savedResponseId`; it never collapses transcript, translation, summary,
-systematic visual description, or systematic onscreen text merely because
-their source intervals match or overlap.
+`savedResponseId`; it never collapses transcript, summary, systematic visual
+description, or systematic onscreen text merely because their source
+intervals match or overlap.
 
 ## Checking declared response formats
 
@@ -516,13 +521,12 @@ solely by a fixed output-format registry in the implementation:
 The initial registry is deliberately asymmetric. Timestamped transcript
 generation has already shown that it needs a machine-checked structure and
 mechanically derived covered time. No comparable structural need has been
-observed for the other four reusable output types, so they share one minimal
+observed for the other three reusable output types, so they share one minimal
 free-form format:
 
 | `outputType` | Required `outputFormat` | Kind |
 |---|---|---|
 | `transcript` | `gemini-transcript` version `1` | Structured |
-| `translation` | `gemini-free-form-text` version `1` | Free-form |
 | `summary` | `gemini-free-form-text` version `1` | Free-form |
 | `systematic_visual_description` | `gemini-free-form-text` version `1` | Free-form |
 | `systematic_onscreen_text` | `gemini-free-form-text` version `1` | Free-form |
@@ -536,9 +540,9 @@ range. The controlled output type and the existing language, timestamp, and
 covered-time index fields retain the meaning needed for later search.
 
 Reject an unregistered format name or version and any type-format combination
-not listed above. Do not add a dedicated structured format for translation,
-summary, systematic visual description, or systematic onscreen text until an
-observed need defines the structure, checker, search effect, and offline tests.
+not listed above. Do not add a dedicated structured format for summary,
+systematic visual description, or systematic onscreen text until an observed
+need defines the structure, checker, search effect, and offline tests.
 
 A format check validates only the declared structure and internal consistency:
 required fields and types, timestamp syntax and ordering, requested clip
@@ -811,8 +815,8 @@ approved.
 - empty-index refusal until saved-response enumeration is confirmed;
 - selected-file-only download planning and replanning after a missing or
   invalid file;
-- transcript, translation, summary, systematic visual description, and
-  systematic onscreen text for the same interval all remain indexed;
+- transcript, summary, systematic visual description, and systematic onscreen
+  text for the same interval all remain indexed;
 - adding a distinct saved-response ID preserves every existing entry even when
   intervals or output types match or overlap;
 - adding the same ID is an idempotent verified no-op, while the same ID with
@@ -841,7 +845,7 @@ approved.
   `outputFormat`, while both fields are absent for the one-time classes;
 - the format registry accepts `gemini-transcript` version `1` only for
   `transcript`, accepts `gemini-free-form-text` version `1` only for the other
-  four initial reusable output types, and rejects every other pairing;
+  three reusable output types, and rejects every other pairing;
 - reusable saved filenames contain their verified controlled output type;
 - identical response text from different source time ranges receives distinct
   saved-response identities;

@@ -519,17 +519,23 @@ class SavedGeminiResponseTests(SavedResponseFixture):
                 covered_time_ranges=[{"startMs": 0, "endMs": 700_000}],
             )
 
-    def test_translation_requires_source_and_target_languages(self):
-        with self.assertRaisesRegex(request_log.RequestLogError, "targetLanguage"):
-            self.build_response(
-                output_type="translation",
-                language_policy={"sourceLanguage": "hi"},
+    def test_translation_cannot_be_saved_or_searched_as_reusable_material(self):
+        output_format = {"name": "gemini-free-form-text", "version": 1}
+        with self.assertRaisesRegex(
+            common.YouTubeWorkError, "Unsupported reusable output type"
+        ):
+            saved.saved_response_filename(VIDEO_ID, "translation", "a" * 64)
+        with self.assertRaisesRegex(
+            common.YouTubeWorkError, "Unsupported reusable output type"
+        ):
+            saved.validate_query(
+                {
+                    "video": VIDEO_ID,
+                    "outputType": "translation",
+                    "outputFormat": output_format,
+                    "requestedTimeRanges": [{"startMs": 0, "endMs": 600_000}],
+                }
             )
-        item = self.build_response(
-            output_type="translation",
-            language_policy={"sourceLanguage": "hi", "targetLanguage": "en"},
-        )
-        self.assertEqual(item["saved"]["languagePolicy"]["targetLanguage"], "en")
 
     def test_saved_response_files_are_immutable(self):
         item = self.build_response()
@@ -617,15 +623,10 @@ class MaterialIndexTests(SavedResponseFixture):
             )
         self.assertEqual(index, original)
 
-    def test_all_five_reusable_output_types_coexist_for_one_interval(self):
+    def test_all_four_reusable_output_types_coexist_for_one_interval(self):
         index = saved.new_material_index(VIDEO_ID, updated_at=T0)
         for output_type in common.OUTPUT_FORMATS:
-            language = (
-                {"sourceLanguage": "hi", "targetLanguage": "en"}
-                if output_type == "translation"
-                else None
-            )
-            item = self.build_response(output_type=output_type, language_policy=language)
+            item = self.build_response(output_type=output_type)
             self.add(index, item)
         self.assertEqual(
             {item["outputType"] for item in index["materials"]},
@@ -724,16 +725,16 @@ class MaterialIndexTests(SavedResponseFixture):
 
     def test_incompatible_language_and_other_output_type_do_not_satisfy_query(self):
         english = self.build_response(
-            output_type="translation",
-            language_policy={"sourceLanguage": "hi", "targetLanguage": "en"},
+            output_type="systematic_onscreen_text",
+            language_policy={"sourceLanguage": "en"},
         )
         summary = self.build_response(output_type="summary")
         index = saved.new_material_index(VIDEO_ID, updated_at=T0)
         self.add(index, english)
         self.add(index, summary)
         query = self.query(
-            output_type="translation",
-            languagePolicy={"sourceLanguage": "hi", "targetLanguage": "bn"},
+            output_type="systematic_onscreen_text",
+            languagePolicy={"sourceLanguage": "bn"},
         )
         plan = saved.find_material(index, query)
         self.assertEqual(plan["coverageStatus"], "missing")

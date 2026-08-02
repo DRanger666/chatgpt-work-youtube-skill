@@ -23,7 +23,6 @@ CONTENT_CLASSES = {
 }
 OUTPUT_FORMATS = {
     "transcript": {"name": "gemini-transcript", "version": 1},
-    "translation": {"name": "gemini-free-form-text", "version": 1},
     "summary": {"name": "gemini-free-form-text", "version": 1},
     "systematic_visual_description": {
         "name": "gemini-free-form-text",
