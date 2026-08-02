@@ -37,9 +37,20 @@ done
 verify_install() {
   candidate=$1
   [ -f "$candidate/VERSION" ] || return 1
+  [ -f "$candidate/README.md" ] || return 1
+  [ -d "$candidate/config" ] || return 1
+  [ -d "$candidate/state" ] || return 1
+  [ -d "$candidate/work" ] || return 1
   [ -x "$candidate/runtime/bin/node" ] || return 1
-  [ -x "$candidate/bin/youtube-research-mcp" ] || return 1
   [ -f "$candidate/app/dist/stdio-server.js" ] || return 1
+  for entry in "$candidate"/* "$candidate"/.[!.]* "$candidate"/..?*; do
+    [ -e "$entry" ] || continue
+    case "${entry##*/}" in
+      app | config | runtime | state | work | README.md | VERSION) ;;
+      *) return 1 ;;
+    esac
+  done
+  rg -q "^youtube_mcp_version=$MCP_VERSION$" "$candidate/VERSION" || return 1
   rg -q "^youtube_mcp_commit=$MCP_COMMIT$" "$candidate/VERSION" || return 1
   rg -q "^node_version=$NODE_VERSION$" "$candidate/VERSION" || return 1
   [ "$("$candidate/runtime/bin/node" --version)" = "$NODE_VERSION" ] || return 1
@@ -47,6 +58,26 @@ verify_install() {
     --install "$candidate" --list-tools 2>/dev/null |
     rg -q '"research-video"' || return 1
 }
+
+mkdir -p "$install_parent"
+install_parent=$(CDPATH= cd -- "$install_parent" && pwd)
+destination=$install_parent/$INSTALL_NAME
+
+case "$destination" in
+  *[[:space:]]*)
+    echo "Refusing a path containing spaces: $destination" >&2
+    exit 1
+    ;;
+esac
+
+if [ -e "$destination" ]; then
+  if [ -d "$destination" ] && verify_install "$destination"; then
+    printf '%s\n' "$destination"
+    exit 0
+  fi
+  echo "Replacement required: existing path does not match the maintained layout: $destination" >&2
+  exit 1
+fi
 
 if [ -d "$search_root/$INSTALL_NAME" ] &&
   verify_install "$search_root/$INSTALL_NAME"; then
@@ -66,17 +97,6 @@ $(find "$search_root" -maxdepth 6 -type f -path "*/$INSTALL_NAME/VERSION" -print
 EOF
 fi
 
-mkdir -p "$install_parent"
-install_parent=$(CDPATH= cd -- "$install_parent" && pwd)
-destination=$install_parent/$INSTALL_NAME
-
-case "$destination" in
-  *[[:space:]]*)
-    echo "Refusing a path containing spaces: $destination" >&2
-    exit 1
-    ;;
-esac
-
 for required in git npm rg; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "Missing required command: $required" >&2
@@ -91,8 +111,8 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-mkdir -p "$portable/app" "$portable/runtime/bin" "$portable/bin" \
-  "$portable/config" "$portable/materials" "$portable/workspace"
+mkdir -p "$portable/app" "$portable/runtime/bin" "$portable/config" \
+  "$portable/state" "$portable/work"
 
 echo "Fetching pinned YouTube MCP source..." >&2
 git -C "$portable/app" init -q
@@ -135,37 +155,6 @@ echo "Installing locked dependencies and compiling..." >&2
 )
 
 printf '%s\n' \
-  '#!/bin/sh' \
-  'set -eu' \
-  'script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)' \
-  'install_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)' \
-  'env_file=${YOUTUBE_MCP_ENV_FILE:-"$install_dir/config/.env"}' \
-  'if [ -f "$env_file" ]; then' \
-  '  set -a' \
-  '  . "$env_file"' \
-  '  set +a' \
-  'fi' \
-  'exec "$install_dir/runtime/bin/node" "$install_dir/app/dist/stdio-server.js" "$@"' \
-  >"$portable/bin/youtube-research-mcp"
-
-printf '%s\n' \
-  '#!/bin/sh' \
-  'set -eu' \
-  'script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)' \
-  'install_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)' \
-  'env_file=${YOUTUBE_MCP_ENV_FILE:-"$install_dir/config/.env"}' \
-  'if [ -f "$env_file" ]; then' \
-  '  set -a' \
-  '  . "$env_file"' \
-  '  set +a' \
-  'fi' \
-  'exec "$install_dir/runtime/bin/node" "$install_dir/app/dist/http-server.js" "$@"' \
-  >"$portable/bin/youtube-research-http"
-
-chmod 755 "$portable/bin/youtube-research-mcp" \
-  "$portable/bin/youtube-research-http"
-
-printf '%s\n' \
   "installation_name=$INSTALL_NAME" \
   "youtube_mcp_version=$MCP_VERSION" \
   "youtube_mcp_commit=$MCP_COMMIT" \
@@ -176,20 +165,18 @@ printf '%s\n' \
 printf '%s\n' \
   '# YouTube MCP Portable' \
   '' \
-  'Pinned, relocatable YouTube MCP installation.' \
+  'Pinned YouTube MCP installation for ChatGPT Work.' \
   '' \
   '- `app/`: source, dependencies, and build' \
-  '- `runtime/`: bundled Node.js runtime' \
-  '- `bin/`: stdio and HTTP launchers' \
   '- `config/`: local environment files; never commit secrets' \
-  '- `materials/`: URLs, prompts, and reusable source material' \
-  '- `workspace/`: temporary per-video outputs' \
+  '- `runtime/`: bundled Node.js runtime' \
+  '- `state/`: Gemini router state created when first needed' \
+  '- `work/`: disposable requests, responses, arguments, and intermediate files' \
   >"$portable/README.md"
 
 if [ -e "$destination" ]; then
-  backup=$install_parent/${INSTALL_NAME}-invalid-$(date -u +%Y%m%dT%H%M%SZ)
-  echo "Moving invalid installation to $backup" >&2
-  mv "$destination" "$backup"
+  echo "Replacement required: destination appeared during installation: $destination" >&2
+  exit 1
 fi
 
 mv "$portable" "$destination"
