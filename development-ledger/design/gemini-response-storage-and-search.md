@@ -22,6 +22,11 @@ paths, and current file fields are summarized for the running skill in
 The initial implementation was validated offline before any live files were
 created in `YouTubeVideoWork` or any Gemini generation quota was consumed.
 
+LEDGER-014 blocks live use until the redundant per-record timestamp-coordinate
+field is removed from request logging, saved responses, material indexes, and
+search. Video-start time is a system and output-format rule, not stored or
+queried as variable metadata.
+
 The design replaces the request-byte lookup and the later artifact/manifest
 model. Cache-v2 files remain outside this system and are not imported,
 searched, migrated, or used as fallback data.
@@ -35,8 +40,8 @@ The saved-material system answers two questions:
    range, or must the skill request missing material from Gemini?
 
 Prompt wording and request-file serialization are not material search keys.
-The system searches by video, controlled output type, output format, language,
-timestamp policy, and checked covered time.
+The system searches by video, controlled output type, output format, applicable
+language requirements, and checked covered time.
 
 ## Drive files
 
@@ -64,7 +69,7 @@ A saved response contains:
 - fixed `contentClass`, controlled `outputType`, and compatible
   `outputFormat`;
 - the exact requested `sourceTimeRange`;
-- applicable `timestampsRelativeTo` and `languagePolicy`;
+- applicable `languagePolicy`;
 - the complete safe `routerResult` retained from the matching run;
 - `responseSha256` and the exact UTF-8 response text in `responseJsonText`;
 - `formatCheck` exactly when the registered output format has a deterministic
@@ -100,7 +105,7 @@ Its top-level fields are `fileFormatVersion`, `videoId`, `materials`, and
   SHA-256;
 - controlled `outputType` and `outputFormat`;
 - checked `coveredTimeRanges`;
-- applicable timestamp and language policy; and
+- applicable language policy; and
 - a concise `materialDescription` when the output type alone is insufficient.
 
 The index never contains prompts, request IDs, run numbers, Gemini status,
@@ -146,17 +151,36 @@ structure. It has no `formatCheck`. ChatGPT reads it once before admission and
 supplies only conservative covered time inside the response's declared source
 range. Do not manufacture a format-check result for prose.
 
+## Time representation
+
+Every `startMs` and `endMs` value in this system is an offset from the beginning
+of the YouTube video. The `gemini-transcript` version `1` format defines its
+`MM:SS.mmm` strings the same way. This is one fixed interpretation, not a
+per-response choice or a search condition.
+
+Partial processing remains independently reusable. For example, a response
+created from minutes 10 through 20 records `sourceTimeRange` and checked
+coverage between `600000` and `1200000`, while its transcript labels run from
+`10:00.000` through `20:00.000`. Save and index that response immediately;
+minutes 0 through 10 do not need to exist first.
+
+Do not store or accept `timestampsRelativeTo`, `timestampBasis`, or a renamed
+equivalent in a request-log entry, saved response, material-index entry, or
+material query. If a future output genuinely requires another coordinate
+system, normalize it to video-start offsets before storage or define a new
+output-format version through a separate design decision.
+
 ## Searching saved Gemini material
 
 The caller supplies normalized video identity, controlled output type,
 compatible output format, requested half-open millisecond ranges, and any
-language or timestamp requirement.
+applicable language requirement.
 
 Search in this order:
 
 1. Open the predictable per-video material index.
 2. Filter entries by output type and output-format version.
-3. Apply language and timestamp compatibility.
+3. Apply the declared language requirement when one exists.
 4. Calculate exact, containing, or combined coverage from the readable index.
 5. Select the smallest suitable set of entries and return their saved-response
    IDs plus any missing ranges.
@@ -192,8 +216,8 @@ response can enter the index, the registered checker must:
 
 1. extract the generated JSON from the Gemini response envelope;
 2. require exactly the documented transcript and segment fields and types;
-3. parse full-video `MM:SS.mmm` timestamps whose minute part has at least two
-   digits and can exceed `99`;
+3. parse `MM:SS.mmm` timestamps as offsets from the beginning of the YouTube
+   video, with a minute part of at least two digits that can exceed `99`;
 4. require returned clip bounds to equal the requested clip;
 5. require ordered, in-range segment times and valid controlled values;
 6. check `completed_through_timestamp`, `transcription_complete`,
@@ -249,7 +273,11 @@ or response-retention machinery without observed need and a new design review.
 - index rebuilding and refusal to initialize empty before enumeration;
 - free-form review, source-range bounds, and absence of fabricated checks;
 - complete, partial, truncated, malformed, and long-timestamp transcripts;
+- independent saving and reuse of a focused partial interval whose time values
+  remain offsets from the beginning of the video;
 - request/response clip mismatch and false-coverage rejection;
+- rejection of every removed timestamp-coordinate field at request-log,
+  saved-response, material-index, and material-query boundaries;
 - response-byte, saved-response identity, and stored-file integrity checks;
 - no saved response or index entry for either one-time content class; and
 - complete isolation from cache v2.

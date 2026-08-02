@@ -72,6 +72,60 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
 
+### LEDGER-014 — Remove redundant timestamp-coordinate metadata
+
+- Status: Planned — release blocker
+- Type: Design correction and implementation
+- Layer: Gemini request metadata, response storage, material indexing, and
+  search
+- Evidence:
+  - The first cache-v3 storage implementation accepted only video-start
+    timestamps. A later negative search test used `clip_relative` only to prove
+    that a different value would not match stored material; the system never
+    implemented creation or conversion of that alternate coordinate.
+  - The saved-material rewrite renamed the field to `timestampsRelativeTo` and
+    allowed arbitrary non-empty values for generic reusable output, even though
+    no supported workflow or output format defined another interpretation.
+  - `sourceTimeRange` and `coveredTimeRanges` already express which partial
+    interval was processed and retained. The extra field does not enable
+    focused processing or partial reuse.
+- Decision:
+  - Define every millisecond time range as an offset from the beginning of the
+    YouTube video.
+  - Define `gemini-transcript` version `1` timestamp strings as offsets from the
+    beginning of the same video.
+  - Remove `timestampsRelativeTo`, `timestampBasis`,
+    `TIMESTAMPS_FULL_VIDEO`, `--timestamps-relative-to`, and any renamed
+    replacement. Do not preserve the mistake as a constant-valued field.
+  - Save and index any checked partial interval immediately; processing the
+    rest of the video is not a prerequisite.
+  - Keep `languagePolicy` as a genuine material-search condition. This
+    correction must not remove or weaken it.
+- Required implementation:
+  - [x] Correct the governing storage/search design before runtime work begins.
+  - [ ] Remove timestamp-coordinate metadata from the request-log fields,
+        request construction APIs, CLI, validation, and immutable-metadata
+        comparisons.
+  - [ ] Remove it from saved responses, saved-response identity, material-index
+        entries, index rebuilding, material queries, filtering, returned search
+        data, missing-range output, and chunk output.
+  - [ ] Make the transcript format contract and checker own the video-start
+        timestamp rule without storing a separate coordinate label.
+  - [ ] Update `SKILL.md`, `references/contracts.md`, and active examples.
+        Preserve completed historical ledger records.
+  - [ ] Add offline tests that save and reuse a focused nonzero interval, reject
+        every removed field at public file and command boundaries, and prove
+        that transcript checking still compares returned timestamps with the
+        absolute requested interval.
+  - [ ] Run the complete offline suite and package validation without Gemini
+        calls or live Drive writes.
+- Completion rule: Close this item only when the removed identifiers no longer
+  occur in runtime code, current contracts, active examples, or tests; their
+  appearance inside preserved historical evidence does not count as active
+  support.
+- Related document:
+  [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
+
 ## Completed refinements
 
 ### LEDGER-013 — Clarify documentation ownership and restore long-video planning
