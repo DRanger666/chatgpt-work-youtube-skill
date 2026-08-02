@@ -70,7 +70,7 @@ feature, investigation, design, and refinement work.
   - [ ] After the user approves that inventory, delete only those v2 files and
         verify that `YouTubeVideoWork` remains unchanged.
 - Related document:
-  [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
+  [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
 
 ## Completed refinements
 
@@ -91,14 +91,16 @@ feature, investigation, design, and refinement work.
   - Retained on-demand translation as a ChatGPT consumption step over saved
     source-language material.
 - Related document:
-  [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
+  [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
 
 ## Completed Gemini-response and video-material release corrections
 
 The earlier implementation remains useful evidence, but its public names and
-its automatic crash-handling design are not the release specification. The
-three completed items below are governed by
-[`design/youtube-saved-work.md`](design/youtube-saved-work.md).
+its automatic crash-handling design are not the release specification.
+LEDGER-008 and LEDGER-009 are governed by
+[`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md);
+LEDGER-010 is governed by
+[`design/gemini-request-execution.md`](design/gemini-request-execution.md).
 
 ### LEDGER-008 — Find and reuse video material before Gemini
 
@@ -362,8 +364,8 @@ three completed items below are governed by
     decisions without session-ownership machinery.
   - Implementation commits: `1ddf84d`, `fc2dd33`, `f7f8d84`, and `ac15fff`.
 - Related documents:
-  - [`design/youtube-saved-work.md`](design/youtube-saved-work.md)
-  - [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
+  - [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
+  - [`design/gemini-request-execution.md`](design/gemini-request-execution.md)
 
 ## Closed items
 
@@ -438,7 +440,7 @@ three completed items below are governed by
         repository.
   - [x] Do not exhaust either project merely to prove quota independence.
 - Related document:
-  [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
+  [`design/gemini-request-execution.md`](design/gemini-request-execution.md)
 
 ### LEDGER-004 — Add interactive Gemini quota-pool routing
 
@@ -456,4 +458,4 @@ three completed items below are governed by
         generating content or approaching quota.
   - [x] Kept all long-video chunks sequential by default.
 - Related document:
-  [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md)
+  [`design/gemini-request-execution.md`](design/gemini-request-execution.md)

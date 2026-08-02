@@ -12,10 +12,14 @@ the eventual decision.
 
 - [`backlog.md`](backlog.md) is the actionable index of open, deferred,
   completed, rejected, and superseded work.
+- `design/` contains current design rationale, invariants, and deliberately
+  unsupported boundaries for subsystems that need more detail than the runtime
+  contract.
 - `investigations/` contains repeatable test plans, trial evidence, and
   cross-trial conclusions.
-- Future design or debugging documents should remain inside this directory and
-  be linked from the backlog.
+- Future design, investigation, or debugging documents should remain inside
+  the corresponding subdirectory and be linked from the backlog and the
+  document index below.
 
 ## Status vocabulary
 
@@ -61,10 +65,10 @@ Use this minimum record:
 Detailed work can live in a separate document. The backlog entry should remain
 the concise index and lifecycle record.
 
-## Investigation index
+## Document index
 
 | Document | Scope |
 |---|---|
 | [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md) | Layer-aware clean-account installation testing and friction reporting |
-| [`design/gemini-interactive-quota-pool.md`](design/gemini-interactive-quota-pool.md) | Conservative two-project Gemini routing for interactive video analysis |
-| [`design/youtube-saved-work.md`](design/youtube-saved-work.md) | Plain-language design for controlled reusable outputs, per-video material indexes, one-time Gemini responses, run-linked saved responses, interrupted runs, and same-video limits |
+| [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md) | Saved Gemini responses, reusable-output checks, per-video material indexes, and material search |
+| [`design/gemini-request-execution.md`](design/gemini-request-execution.md) | Gemini request logs, numbered runs, credential routing, interruptions, and same-video write limits |
