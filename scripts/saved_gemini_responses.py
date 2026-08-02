@@ -101,7 +101,7 @@ def saved_response_filename(video_source: str, output_type: str, saved_response_
     return f"{video_id}--gemini-response--{output_type}--{saved_response_id}.json"
 
 
-def _parse_full_video_timestamp(value, failure="timestamp_syntax"):
+def _parse_video_start_timestamp(value, failure="timestamp_syntax"):
     if not isinstance(value, str):
         raise _TranscriptFormatError(failure)
     match = TIMESTAMP_PATTERN.fullmatch(value)
@@ -144,9 +144,9 @@ def _checked_transcript_coverage(response, source_time_range):
     transcript, finish_reason = _extract_generated_transcript(response)
     if not isinstance(transcript, dict) or set(transcript) != TRANSCRIPT_FIELDS:
         raise _TranscriptFormatError("transcript_fields")
-    clip_start = _parse_full_video_timestamp(transcript["clip_start_timestamp"])
-    clip_end = _parse_full_video_timestamp(transcript["clip_end_timestamp"])
-    completed = _parse_full_video_timestamp(
+    clip_start = _parse_video_start_timestamp(transcript["clip_start_timestamp"])
+    clip_end = _parse_video_start_timestamp(transcript["clip_end_timestamp"])
+    completed = _parse_video_start_timestamp(
         transcript["completed_through_timestamp"]
     )
     if (
@@ -163,8 +163,8 @@ def _checked_transcript_coverage(response, source_time_range):
     for segment in segments:
         if not isinstance(segment, dict) or set(segment) != SEGMENT_FIELDS:
             raise _TranscriptFormatError("segment_fields")
-        start = _parse_full_video_timestamp(segment["start_timestamp"])
-        end = _parse_full_video_timestamp(segment["end_timestamp"])
+        start = _parse_video_start_timestamp(segment["start_timestamp"])
+        end = _parse_video_start_timestamp(segment["end_timestamp"])
         if not clip_start <= start < end <= clip_end:
             raise _TranscriptFormatError("segment_range")
         if end > completed:

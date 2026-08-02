@@ -482,7 +482,7 @@ class SavedGeminiResponseTests(SavedResponseFixture):
             "completion_flags",
         )
 
-    def test_transcript_checker_accepts_full_video_minutes_above_99(self):
+    def test_transcript_checker_accepts_video_start_minutes_above_99(self):
         item = self.build_response(
             start_ms=7_200_000,
             end_ms=7_260_000,

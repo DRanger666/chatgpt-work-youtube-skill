@@ -198,7 +198,7 @@ from one numbered run. Its format version is `1` and it contains:
 - normalized `videoId`;
 - `savedResponseId`, `requestId`, `runNumber`, and `exactRequestSha256`;
 - fixed `contentClass`, controlled `outputType`, and compatible `outputFormat`;
-- exact requested `sourceTimeRange` and applicable timestamp/language policy;
+- exact requested `sourceTimeRange` and applicable `languagePolicy`;
 - the complete safe `routerResult`;
 - `responseSha256` and the exact UTF-8 Gemini response file text in
   `responseJsonText`;
