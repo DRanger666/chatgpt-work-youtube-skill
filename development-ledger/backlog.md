@@ -87,12 +87,18 @@ feature, investigation, design, and refinement work.
   - The installer creates and documents `materials/`, but no runtime code
     reads or writes it. MCP results are deliberately temporary, while reusable
     Gemini responses are stored on Drive.
-  - `workspace/` currently holds both disposable argument and intermediate
-    files and `gemini-keypool-state.json`. The latter preserves credential
-    cooldown and disablement state and must not be treated as disposable work.
+  - `workspace/` is assigned both disposable argument and intermediate files
+    and the future `gemini-keypool-state.json` path. Those two purposes should
+    not share one vaguely named directory.
   - Naming an inner directory `workspace/` under
     `/workspace/youtube-mcp-portable` obscures the distinction between the
     mounted Work storage root and the installation's temporary files.
+  - The current portable installation contains reproducible MCP source,
+    dependencies, build output, and runtime files. Durable Gemini responses,
+    material indexes, and request logs live on Drive; credentials can be
+    restored from Drive; and no current Gemini routing state needs to be
+    retained. Nothing in the old local installation warrants backup or data
+    transfer.
 - Decision:
   - Keep `/workspace/youtube-mcp-portable` as the exact installation path.
   - Keep `app/`, `runtime/`, and `config/`: they respectively contain the
@@ -104,9 +110,12 @@ feature, investigation, design, and refinement work.
   - Remove `materials/` without introducing a renamed replacement.
   - Replace `workspace/` with `work/` for disposable local arguments,
     requests, responses, downloaded working copies, and intermediate JSON.
-  - Store only the local Gemini routing state at
-    `state/gemini-keypool-state.json`. This state contains no credentials, but
-    it must remain separate from files that can be cleared after a task.
+  - Reserve `state/gemini-keypool-state.json` for router state created by
+    future Gemini use. The new installation starts with no state to transfer;
+    the router creates the file when it first has state to write.
+  - Delete the old local portable installation and build the maintained layout
+    cleanly. Do not add backup, carry-over, conversion, or compatibility logic
+    for the discarded pre-release layout.
   - The resulting maintained layout is exactly:
 
     ```text
@@ -129,28 +138,26 @@ feature, investigation, design, and refinement work.
         MCP handshake/tool enumeration.
   - [ ] Make the old `bin/`/`materials/`/`workspace/` layout fail current-layout
         discovery so it cannot be returned as an up-to-date installation.
-        Preserve the existing installation through the installer's timestamped
-        backup behavior before replacing it.
-  - [ ] If the replaced installation contains
-        `workspace/gemini-keypool-state.json`, carry that exact file into the
-        new `state/` location so an active cooldown is not forgotten. Preserve
-        all other old contents only in the timestamped backup; do not invent a
-        permanent compatibility layout.
+        Replace the exact old portable-installation directory without retaining
+        a timestamped copy or transferring any local files. Do not touch Drive.
   - [ ] Update `SKILL.md`, `references/contracts.md`, the generated portable
         `README.md`, and `.gitignore` to use only `work/` and `state/` for their
         defined purposes. Remove active references to the deleted directories
         and launchers; preserve historical ledger evidence unchanged.
-  - [ ] Add offline installer checks for the exact new tree, rejection of the
-        old layout, direct MCP verification without the installation-root
-        launcher directory, and preservation of an existing key-pool state
-        file during replacement.
+  - [ ] In an isolated temporary directory, perform a clean installation using
+        the pinned source and dependencies, then start that installed MCP
+        locally and complete initialization plus tool enumeration. This test
+        may use the network for installation; it must not access a video,
+        Gemini, Drive, or any credential.
+  - [ ] Add installer checks for the exact new tree, rejection of the old
+        layout, and direct MCP verification without the installation-root
+        launcher directory. Do not add migration or backup tests.
   - [ ] Verify that complex MCP arguments work from `work/`, Gemini routing
-        reads and updates the state file in `state/`, credentials remain in
-        `config/` with mode `0600`, and the complete offline suite and skill
+        is configured to create its first state file under `state/`, credential
+        handling remains unchanged, and the complete offline suite and skill
         package validation pass without Gemini calls or Drive mutation.
-- Completion rule: Close this item only when a clean installation and an
-  old-layout replacement both produce the maintained tree, the MCP handshake
-  succeeds without launcher wrappers, routing state survives replacement, and
+- Completion rule: Close this item only when a clean replacement produces the
+  maintained tree, the MCP handshake succeeds without launcher wrappers, and
   no active contract, procedure, script, or test refers to the removed
   installation-root `bin/`, `materials/`, or the installation's former
   `workspace/` directory. The required Node executable remains
