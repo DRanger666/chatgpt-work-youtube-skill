@@ -89,8 +89,8 @@ Use `scripts/saved_gemini_responses.py`.
    `rebuild-material-index` when responses exist. Run `init-material-index
    --confirmed-no-saved-responses` only after confirming none exist.
 3. Create a query containing the video, controlled output type, compatible
-   output format, requested half-open millisecond ranges, and applicable
-   language or timestamp policy. Run `find-material` against the local index.
+   output format, requested half-open millisecond ranges, and any applicable
+   language policy. Run `find-material` against the local index.
 4. Download only files listed in `savedResponseIdsToFetch`, then run
    `verify-selected`. If selected files are missing, stale, or invalid, fetch
    only any replacements in the new plan and verify again.
@@ -148,9 +148,9 @@ python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
   --output REQUEST_JSON
 ```
 
-This mode requests only audible linguistic content in the original language,
-uses full-video timestamps, and defaults to 8192 output tokens. Timestamp
-minutes have at least two digits and may exceed 99.
+This mode requests only audible linguistic content in the original language
+and defaults to 8192 output tokens. Its `MM:SS.mmm` fields are video-start
+offsets whose minute part has at least two digits and may exceed 99.
 
 For long material, feed the verified missing-range plan to `plan-chunks` with
 `--chunk-seconds 600 --overlap-seconds 4`. If a response is incomplete or
@@ -259,9 +259,10 @@ python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
   --output REQUEST_JSON
 ```
 
-Use full-video timestamps. Save each reusable response separately; synthesize
-from reused material in ChatGPT unless a distinct reusable Gemini output is
-actually needed.
+Treat every returned `startMs` and `endMs` as a millisecond offset from the
+beginning of the video. Save each reusable response separately; synthesize from
+reused material in ChatGPT unless a distinct reusable Gemini output is actually
+needed.
 
 ## Recover Gemini credentials privately
 

@@ -74,7 +74,7 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-014 — Remove redundant timestamp-coordinate metadata
 
-- Status: Planned — release blocker
+- Status: Completed
 - Type: Design correction and implementation
 - Layer: Gemini request metadata, response storage, material indexing, and
   search
@@ -103,22 +103,32 @@ feature, investigation, design, and refinement work.
     correction must not remove or weaken it.
 - Required implementation:
   - [x] Correct the governing storage/search design before runtime work begins.
-  - [ ] Remove timestamp-coordinate metadata from the request-log fields,
+  - [x] Remove timestamp-coordinate metadata from the request-log fields,
         request construction APIs, CLI, validation, and immutable-metadata
         comparisons.
-  - [ ] Remove it from saved responses, saved-response identity, material-index
+  - [x] Remove it from saved responses, saved-response identity, material-index
         entries, index rebuilding, material queries, filtering, returned search
         data, missing-range output, and chunk output.
-  - [ ] Make the transcript format contract and checker own the video-start
+  - [x] Make the transcript format contract and checker own the video-start
         timestamp rule without storing a separate coordinate label.
-  - [ ] Update `SKILL.md`, `references/contracts.md`, and active examples.
+  - [x] Update `SKILL.md`, `references/contracts.md`, and active examples.
         Preserve completed historical ledger records.
-  - [ ] Add offline tests that save and reuse a focused nonzero interval, reject
+  - [x] Add offline tests that save and reuse a focused nonzero interval, reject
         every removed field at public file and command boundaries, and prove
         that transcript checking still compares returned timestamps with the
         absolute requested interval.
-  - [ ] Run the complete offline suite and package validation without Gemini
+  - [x] Run the complete offline suite and package validation without Gemini
         calls or live Drive writes.
+- Outcome:
+  - Commit `a0bde4d` removed the redundant metadata from runtime schemas,
+    identities, APIs, commands, saved material, search, and tests.
+  - Every numerical range now has one video-start interpretation, while
+    `gemini-transcript` version `1` owns its corresponding textual timestamp
+    contract.
+  - Focused nonzero intervals remain immediately saveable and reusable, and
+    `languagePolicy` remains a material-search condition.
+  - All 81 offline tests and skill-package validation passed without Gemini or
+    Drive mutation.
 - Completion rule: Close this item only when the removed identifiers no longer
   occur in runtime code, current contracts, active examples, or tests; their
   appearance inside preserved historical evidence does not count as active

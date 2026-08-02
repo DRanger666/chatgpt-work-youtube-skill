@@ -88,8 +88,8 @@ prompt follows the video part.
 
 When exact wording is needed, pass `--transcript-only`. The builder fixes the
 tested prompt, JSON response schema, and 8192-token allowance. Transcript
-timestamps use `MM:SS.mmm`, where minutes have at least two digits and can
-exceed 99.
+timestamps use `MM:SS.mmm` video-start offsets, where minutes have at least two
+digits and can exceed 99.
 
 Send only a request that has already been recorded as the highest pending run:
 
@@ -157,7 +157,7 @@ chosen `chunkSeconds` and `overlapSeconds`, and lists half-open millisecond
 
 For transcript-only work, use `--chunk-seconds 600 --overlap-seconds 4` because
 structured transcript output reaches practical output limits earlier than
-general analysis. Reconcile the overlap using full-video timestamps. If a
+general analysis. Reconcile the overlap using video-start offsets. If a
 representative clip fails ingestion or produces incomplete output, reduce its
 size rather than repeating the identical request.
 
@@ -178,7 +178,9 @@ deliberately asymmetric:
 | `systematic_onscreen_text` | `gemini-free-form-text` version `1` | ChatGPT review before indexing |
 
 Reject any other type, format, or type-format pairing. Transcript uses
-original-language content and `timestampsRelativeTo: "full_video"`.
+original-language content. All `startMs` and `endMs` values are millisecond
+offsets from the beginning of the YouTube video. The `MM:SS.mmm` fields defined
+by `gemini-transcript` version `1` represent the same video-start offsets.
 Translate on demand in ChatGPT from saved original-language transcripts or
 systematic onscreen text; do not save or search translation as a reusable
 Gemini output.
@@ -210,9 +212,9 @@ bytes. A different authorized run therefore receives a different saved
 response ID even when Gemini returns identical text.
 
 The transcript checker requires the exact response fields and segment fields,
-valid full-video timestamps, the requested clip bounds, ordered in-range
-segments, consistent completion flags, and a compatible API finish reason. It
-derives covered time from the clip start through
+valid video-start timestamp offsets, the requested clip bounds, ordered
+in-range segments, consistent completion flags, and a compatible API finish
+reason. It derives covered time from the clip start through
 `completed_through_timestamp`. A malformed response is still saved but has a
 failed check and no covered time, so it cannot enter the material index.
 
@@ -230,12 +232,12 @@ The material index is a small search file with only:
 
 Each material entry contains its `savedResponseId`, Drive file ID, predictable
 filename, exact stored-file SHA-256, output type and format, and covered time
-ranges. Applicable timestamp/language policy and a concise reviewed material
-description can also appear. Request IDs, run numbers, prompts, router
-attempts, retry reasons, cooldowns, and request status do not belong here.
+ranges. An applicable language policy and a concise reviewed material
+description can also appear. Request IDs, run numbers, prompts, router attempts,
+retry reasons, cooldowns, and request status do not belong here.
 
 Search the readable index fields before downloading response files. Match
-output type, format, language, timestamp policy, and half-open millisecond
+output type, format, applicable language policy, and half-open millisecond
 coverage. The planner supports exact, containing, combined, overlapping,
 partial, incompatible, and missing coverage. It returns only selected saved
 response IDs and remaining ranges. Download and verify only selected files;

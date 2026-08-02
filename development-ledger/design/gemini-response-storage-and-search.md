@@ -19,13 +19,10 @@ paths, and current file fields are summarized for the running skill in
 
 ## Status
 
-The initial implementation was validated offline before any live files were
-created in `YouTubeVideoWork` or any Gemini generation quota was consumed.
-
-LEDGER-014 blocks live use until the redundant per-record timestamp-coordinate
-field is removed from request logging, saved responses, material indexes, and
-search. Video-start time is a system and output-format rule, not stored or
-queried as variable metadata.
+The implementation is validated offline without creating live files in
+`YouTubeVideoWork` or consuming Gemini generation quota. LEDGER-014 removed the
+redundant per-record timestamp-coordinate field from request logging, saved
+responses, material indexes, and search before live v3 use.
 
 The design replaces the request-byte lookup and the later artifact/manifest
 model. Cache-v2 files remain outside this system and are not imported,
@@ -153,10 +150,10 @@ range. Do not manufacture a format-check result for prose.
 
 ## Time representation
 
-Every `startMs` and `endMs` value in this system is an offset from the beginning
-of the YouTube video. The `gemini-transcript` version `1` format defines its
-`MM:SS.mmm` strings the same way. This is one fixed interpretation, not a
-per-response choice or a search condition.
+All `startMs` and `endMs` values are millisecond offsets from the beginning of
+the YouTube video. The `MM:SS.mmm` fields defined by `gemini-transcript` version
+`1` represent the same video-start offsets. This is one fixed interpretation,
+not a per-response choice or a search condition.
 
 Partial processing remains independently reusable. For example, a response
 created from minutes 10 through 20 records `sourceTimeRange` and checked
@@ -164,11 +161,11 @@ coverage between `600000` and `1200000`, while its transcript labels run from
 `10:00.000` through `20:00.000`. Save and index that response immediately;
 minutes 0 through 10 do not need to exist first.
 
-Do not store or accept `timestampsRelativeTo`, `timestampBasis`, or a renamed
-equivalent in a request-log entry, saved response, material-index entry, or
-material query. If a future output genuinely requires another coordinate
-system, normalize it to video-start offsets before storage or define a new
-output-format version through a separate design decision.
+Do not store or accept a separate timestamp-coordinate field in a request-log
+entry, saved response, material-index entry, or material query. If a future
+output genuinely requires another coordinate system, normalize it to
+video-start offsets before storage or define a new output-format version
+through a separate design decision.
 
 ## Searching saved Gemini material
 
