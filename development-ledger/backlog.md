@@ -113,9 +113,9 @@ feature, investigation, design, and refinement work.
   - Reserve `state/gemini-keypool-state.json` for router state created by
     future Gemini use. The new installation starts with no state to transfer;
     the router creates the file when it first has state to write.
-  - Delete the old local portable installation and build the maintained layout
-    cleanly. Do not add backup, carry-over, conversion, or compatibility logic
-    for the discarded pre-release layout.
+  - Implement only the maintained layout. Do not add code for backup,
+    carry-over, conversion, or compatibility with the discarded pre-release
+    layout.
   - The resulting maintained layout is exactly:
 
     ```text
@@ -129,39 +129,52 @@ feature, investigation, design, and refinement work.
       VERSION
     ```
 
-- Required implementation:
+- Worker implementation:
   - [ ] Change `scripts/ensure_youtube_mcp.sh` to create the maintained layout,
-        stop generating both launcher wrappers, and remove the wrapper-only
-        verification condition.
-  - [ ] Keep installation verification substantive: check the pinned source,
-        compiled stdio server, pinned Node executable and version, and a real
-        MCP handshake/tool enumeration.
-  - [ ] Make the old `bin/`/`materials/`/`workspace/` layout fail current-layout
-        discovery so it cannot be returned as an up-to-date installation.
-        Replace the exact old portable-installation directory without retaining
-        a timestamped copy or transferring any local files. Do not touch Drive.
+        consisting of `app/`, `config/`, `runtime/`, `state/`, `work/`,
+        `README.md`, and `VERSION`.
+  - [ ] Remove creation of `bin/youtube-research-mcp` and
+        `bin/youtube-research-http`, their permission changes, their generated
+        README entries, and the wrapper-only verification condition.
+  - [ ] Keep `verify_install()` focused on the maintained installation: require
+        `VERSION`, the pinned MCP commit, the pinned Node executable and
+        version, and `app/dist/stdio-server.js`; perform tool enumeration
+        directly through `scripts/call_youtube_mcp.mjs`.
+  - [ ] Require `work/` and `state/` when recognizing an existing maintained
+        installation. Do not recognize the former
+        `bin/`/`materials/`/`workspace/` tree as current.
+  - [ ] If the exact destination already exists but fails current verification,
+        stop with a clear replacement-required message. Do not delete, rename,
+        back up, or modify it from the implementation script.
   - [ ] Update `SKILL.md`, `references/contracts.md`, the generated portable
         `README.md`, and `.gitignore` to use only `work/` and `state/` for their
         defined purposes. Remove active references to the deleted directories
         and launchers; preserve historical ledger evidence unchanged.
-  - [ ] In an isolated temporary directory, perform a clean installation using
-        the pinned source and dependencies, then start that installed MCP
-        locally and complete initialization plus tool enumeration. This test
-        may use the network for installation; it must not access a video,
-        Gemini, Drive, or any credential.
-  - [ ] Add installer checks for the exact new tree, rejection of the old
-        layout, and direct MCP verification without the installation-root
-        launcher directory. Do not add migration or backup tests.
-  - [ ] Verify that complex MCP arguments work from `work/`, Gemini routing
-        is configured to create its first state file under `state/`, credential
-        handling remains unchanged, and the complete offline suite and skill
-        package validation pass without Gemini calls or Drive mutation.
-- Completion rule: Close this item only when a clean replacement produces the
-  maintained tree, the MCP handshake succeeds without launcher wrappers, and
-  no active contract, procedure, script, or test refers to the removed
-  installation-root `bin/`, `materials/`, or the installation's former
-  `workspace/` directory. The required Node executable remains
-  `runtime/bin/node`.
+  - [ ] Change every operational path from `$install/workspace/` to
+        `$install/work/`, and change the router-state path to
+        `$install/state/gemini-keypool-state.json`. Leave credential handling
+        at `$install/config/youtube-workbench-secrets.env` unchanged.
+  - [ ] Add focused repository checks for the maintained paths and removed
+        launcher-generation code. Run shell syntax checks, the complete
+        existing offline suite, active-reference scans, and skill-package
+        validation. Do not install an MCP, call Gemini, access Drive, modify the
+        installed skill, or alter `/workspace/youtube-mcp-portable`.
+- Main/user acceptance after implementation review and merge:
+  - [ ] Delete the existing `/workspace/youtube-mcp-portable` installation.
+  - [ ] Run the merged installer to build a fresh portable installation from
+        the pinned source and dependencies.
+  - [ ] Confirm the exact maintained tree and absence of the removed
+        installation-root `bin/`, `materials/`, and `workspace/` directories.
+  - [ ] Start the newly installed MCP locally and complete initialization plus
+        tool enumeration. Do not access a video, Gemini, Drive, or a credential.
+  - [ ] Confirm that a complex MCP argument file can be read from `work/` and
+        that the configured future router-state path is under `state/`.
+- Completion rule: The worker must leave this item open after implementation.
+  Close it only after the main/user acceptance checks pass, the installed MCP
+  handshake succeeds without launcher wrappers, and no active contract,
+  procedure, script, or test refers to the removed installation-root `bin/`,
+  `materials/`, or former `workspace/` directory. The required Node executable
+  remains `runtime/bin/node`.
 
 ## Completed refinements
 
