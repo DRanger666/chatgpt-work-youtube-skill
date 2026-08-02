@@ -14,15 +14,24 @@ happening.
 
 ## How it works
 
-The skill uses two complementary routes.
+The runtime source order is deliberate:
 
-### 1. YouTube MCP for transcript research
+1. Ask the YouTube MCP for every relevant item it can provide.
+2. If the MCP material is sufficient, use it directly and stop.
+3. Otherwise, search previously saved Gemini material for the missing need.
+4. Make a new Gemini request only for information that neither earlier source
+   supplies.
+
+### YouTube MCP first
 
 The primary route is
 [`coyaSONG/youtube-mcp-server`](https://github.com/coyaSONG/youtube-mcp-server).
 It retrieves available captions and provides focused transcript research with
-timestamp-linked YouTube citations. For captioned videos, this is usually the
-fastest and least expensive way to answer a question.
+timestamp-linked YouTube citations, plus other applicable information exposed
+by the server. For captioned videos, this is usually the fastest and least
+expensive way to answer a question. MCP results remain temporary because they
+can be retrieved again without consuming Gemini quota; they are not copied
+into the saved-Gemini material index.
 
 The portable installation is pinned to:
 
@@ -31,10 +40,7 @@ The portable installation is pinned to:
   [`06d5e7a83783f7a44498da88ade2ccaa42238747`](https://github.com/coyaSONG/youtube-mcp-server/commit/06d5e7a83783f7a44498da88ade2ccaa42238747)
 - Node.js: `v24.14.0`
 
-At the time of this README update, that commit is also the tip of upstream
-`main`.
-
-### 2. Gemini when transcripts are not enough
+### Gemini only for remaining gaps
 
 An MCP transcript cannot describe frames it cannot see, and some videos have
 no usable captions. Gemini's
@@ -45,10 +51,16 @@ questions, and whole-video understanding.
 When exact source wording is needed, the request builder also has an explicit
 transcript-only mode that prevents a broad audiovisual-analysis response.
 
-Long videos are analyzed in timestamp-bounded chunks. Before constructing a
-Gemini request, the skill searches a per-video material index for compatible
-saved responses and verifies only the selected files. Only uncovered intervals
-are generated.
+Before constructing a Gemini request, the skill searches a per-video material
+index for compatible saved Gemini responses and verifies only the selected
+files. Only uncovered intervals are generated.
+
+Long videos are processed in deterministic timestamp-bounded chunks. General
+video analysis uses a tested 30-minute conservative default with no overlap;
+transcript-only work uses approximately 10-minute clips with four-second
+overlap. The 30-minute default comes from a real whole-video failure followed
+by a successful `0s`–`1800s` request. It is an operating default, not a claim
+about Gemini's absolute video limit.
 
 Saved responses, material indexes, and Gemini request logs live in the
 no-space `YouTubeVideoWork` Drive folder. The request log prevents blind

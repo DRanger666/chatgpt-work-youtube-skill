@@ -1,10 +1,16 @@
 # YouTube workflow contracts
 
+[`SKILL.md`](../SKILL.md) owns runtime source order and procedure. This file
+supplies the exact current paths, pins, filenames, commands, fields, and
+operating values that procedure depends on; it does not define an alternative
+workflow.
+
 ## Contents
 
 - [Local installation](#local-installation)
 - [Google Drive](#google-drive)
 - [Gemini requests](#gemini-requests)
+- [Long-video clipping](#long-video-clipping)
 - [Reusable output formats](#reusable-output-formats)
 - [Saved Gemini responses](#saved-gemini-responses)
 - [Video material index](#video-material-index)
@@ -51,7 +57,7 @@ Retrieve credentials without displaying their bytes. Materialize them at
 variables are `GEMINI_API_KEY` and `GEMINI_API_KEY_FALLBACK`. The fallback must
 belong to a distinct project to provide distinct quota.
 
-Saved YouTube work uses one private folder named `YouTubeVideoWork`. Locate it
+Saved Gemini work uses one private folder named `YouTubeVideoWork`. Locate it
 by exact name and require one unambiguous result. Once created, retain and
 verify its stable Drive ID. Its three filename forms are:
 
@@ -83,8 +89,7 @@ prompt follows the video part.
 When exact wording is needed, pass `--transcript-only`. The builder fixes the
 tested prompt, JSON response schema, and 8192-token allowance. Transcript
 timestamps use `MM:SS.mmm`, where minutes have at least two digits and can
-exceed 99. For long transcripts, prefer approximately 600-second clips with a
-four-second overlap.
+exceed 99.
 
 Send only a request that has already been recorded as the highest pending run:
 
@@ -113,6 +118,52 @@ Every retained router attempt has a sequential `attemptNumber`, bucket alias,
 start and finish times, HTTP status, classification, and applicable safe
 cooldown or backoff data. A successful router result also contains
 `responseSha256`, calculated from the exact response-file bytes.
+
+## Long-video clipping
+
+Gemini accepts YouTube `videoMetadata.startOffset` and `endOffset` values, so
+process a long or rejected whole-video request as bounded clips. The operating
+defaults come from observed behavior in this project:
+
+- a public captionless 2-hour-15-minute Hindi movie failed as one whole-video
+  request;
+- its `0s`–`1800s` clip succeeded; and
+- the resulting five-part 30-minute plan covers that movie through `8100s`.
+
+Google's current
+[video-understanding documentation](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding)
+says a model with a 1-million-token context window can process up to one hour
+of video at default media resolution or three hours at low media resolution.
+That is context capacity, not a guarantee that every YouTube ingestion and
+requested output will succeed. Therefore, 1,800 seconds remains this skill's
+tested conservative default for general video analysis; it is not represented
+as a Gemini hard limit.
+
+After saved-material verification, turn the missing-range plan into clips:
+
+```sh
+python3 scripts/saved_gemini_responses.py plan-chunks \
+  --missing-ranges-plan MISSING_RANGES.json \
+  --chunk-seconds 1800 \
+  --overlap-seconds 0 \
+  --output CHUNKS.json
+```
+
+`plan-chunks` accepts only a normalized missing-range plan produced after
+selected saved responses have been verified. Its output retains
+`fileFormatVersion`, `videoId`, `outputType`, and `outputFormat`, records the
+chosen `chunkSeconds` and `overlapSeconds`, and lists half-open millisecond
+`chunks` without filling gaps between missing ranges.
+
+For transcript-only work, use `--chunk-seconds 600 --overlap-seconds 4` because
+structured transcript output reaches practical output limits earlier than
+general analysis. Reconcile the overlap using full-video timestamps. If a
+representative clip fails ingestion or produces incomplete output, reduce its
+size rather than repeating the identical request.
+
+Run chunks sequentially. Start with one representative clip and expand only
+after it succeeds. Use overlap only when continuity at a boundary matters; the
+general default has no overlap to avoid duplicate processing.
 
 ## Reusable output formats
 
@@ -266,7 +317,9 @@ authorization.
 ## Validated behavior
 
 - Caption retrieval returns timestamp-linked citations for supported videos.
-- Captionless and long-video requests can be clipped to bounded intervals.
+- A captionless 2-hour-15-minute movie failed as a whole-video request and
+  succeeded for `0s`–`1800s`; the deterministic default planner reproduces its
+  five bounded clips.
 - Transcript timestamps work beyond 99 minutes.
 - Transcript validation rejects malformed structure, clip mismatches,
   inconsistent completion flags, bad segment order, and false coverage.

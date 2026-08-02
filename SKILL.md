@@ -5,17 +5,19 @@ description: Reproducible YouTube video research using a portable local YouTube 
 
 # Work with YouTube
 
-Use captions first, saved work second, and Gemini only for material that is
-still missing. Read [references/contracts.md](references/contracts.md) before
-using Google Drive or Gemini.
+Use every relevant source the YouTube MCP can provide first, saved Gemini
+material second, and a new Gemini request only for information that is still
+missing. Read [references/contracts.md](references/contracts.md) before using
+Google Drive or Gemini.
 
 ## Preserve these rules
 
 - Keep the portable MCP installation name `youtube-mcp-portable` and keep its
   `materials/` and `workspace/` directories inside that installation.
 - Never print, quote, summarize, log, or commit an API key.
-- Search saved video material before constructing a Gemini request or loading
-  Gemini credentials.
+- Use sufficient MCP output directly and stop. Only after the MCP path leaves
+  a real gap may the workflow search saved Gemini material, then construct a
+  new Gemini request.
 - Use only the `YouTubeVideoWork` Drive folder and file format version `1`.
   Do not search, import, migrate, or fall back to cache-v2 files.
 - Never edit a saved Gemini response. The per-video material index is only a
@@ -56,21 +58,23 @@ transcript reads with `offset` and `maxSegments`; prefer a focused query.
 ## Choose the least expensive route
 
 1. Normalize the URL to a YouTube video ID.
-2. Check YouTube captions through the MCP. Use usable captions for transcript
-   work without calling Gemini.
-3. Locate the video's material index and saved responses in
-   `YouTubeVideoWork`. Search compatible index entries and verify only the
-   selected response files.
+2. Call the relevant MCP tools for available captions, transcript research,
+   metadata, or other applicable YouTube information. If that material
+   satisfies the task, use it directly and stop. MCP output remains temporary;
+   do not copy it into the Gemini material index.
+3. When information remains missing, locate the video's Gemini material index
+   and saved responses in `YouTubeVideoWork`. Search compatible index entries
+   and verify only the selected response files.
 4. Reuse sufficient verified material. Construct requests only for returned
    missing time ranges.
-5. Use Gemini when captions and saved material are inadequate, visual evidence
-   matters, or the user requests whole-video understanding.
+5. Use Gemini when MCP output and saved Gemini material are inadequate, visual
+   evidence matters, or the user requests whole-video understanding.
 6. Process each video independently before comparing several videos.
 
 A YouTube Data API key does not grant access to unavailable captions; caption
 download normally requires permission to edit the video.
 
-## Search saved video material
+## Search saved Gemini material
 
 The three durable Drive filenames are:
 
@@ -109,6 +113,27 @@ with covered time for material accepted after review, or only
 `admitted: false` for a reviewed response that should remain unindexed. A
 failed structured response also remains saved but is skipped by rebuilding.
 
+## Use Gemini as a video sensor
+
+ChatGPT remains responsible for reasoning and the final answer. Use Gemini for
+video access that the MCP and ChatGPT do not provide: seeing a board or slide,
+reading onscreen text, describing a scene, or checking another specific visual
+fact.
+
+Before the call, classify the requested result:
+
+- Request systematic, broadly reusable source material as `video_material` and
+  save it under one controlled output type.
+- Request narrow sensory evidence for the current task as
+  `task_specific_observation`; return it to ChatGPT and do not retain the
+  response text.
+- Use `direct_answer` only when Gemini's own task-specific answer is actually
+  wanted; do not retain its response text.
+
+Do not turn a narrow question into a reusable category merely to preserve it.
+Prefer a sensory prompt that asks Gemini to report what is visible or audible;
+perform the consequential interpretation in ChatGPT.
+
 ## Request exact wording from Gemini
 
 When captions are absent or inadequate and source wording matters, build the
@@ -127,11 +152,11 @@ This mode requests only audible linguistic content in the original language,
 uses full-video timestamps, and defaults to 8192 output tokens. Timestamp
 minutes have at least two digits and may exceed 99.
 
-Use approximately 600-second transcript clips with four-second overlap for
-long material. If a response is incomplete or truncated, save it normally and
-index only mechanically validated covered time. Request its unfinished range
-with smaller clips, creating a new request. Never repeat the identical request
-as truncation recovery.
+For long material, feed the verified missing-range plan to `plan-chunks` with
+`--chunk-seconds 600 --overlap-seconds 4`. If a response is incomplete or
+truncated, save it normally and index only mechanically validated covered
+time. Request its unfinished range with smaller clips, creating a new request.
+Never repeat the identical request as truncation recovery.
 
 ## Run one Gemini request safely
 
@@ -207,8 +232,23 @@ Do not infer an outcome from elapsed time.
 
 ## Chunk other long requests
 
-Build requests only for verified missing ranges. Start with one representative
-clip and expand sequentially after it succeeds:
+Build requests only for verified missing ranges. Split the output of
+`plan-missing-ranges` deterministically:
+
+```sh
+python3 "$skill_dir/scripts/saved_gemini_responses.py" plan-chunks \
+  --missing-ranges-plan MISSING_RANGES_JSON \
+  --chunk-seconds 1800 \
+  --output CHUNK_PLAN_JSON
+```
+
+Thirty minutes with no overlap is the tested conservative operating default
+for general video analysis, not a claimed Gemini API maximum. Add a small
+overlap only when boundary continuity matters. Start with one representative
+clip and expand sequentially only after it succeeds. If ingestion or output
+fails, reduce the chunk size.
+
+Build each request from one returned chunk:
 
 ```sh
 python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
