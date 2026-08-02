@@ -26,7 +26,6 @@ SAVED_RESPONSE_REQUIRED_FIELDS = {
     "responseJsonText",
 }
 SAVED_RESPONSE_OPTIONAL_FIELDS = {
-    "languagePolicy",
     "coveredTimeRanges",
     "formatCheck",
 }
@@ -41,7 +40,6 @@ MATERIAL_REQUIRED_FIELDS = {
     "coveredTimeRanges",
 }
 MATERIAL_OPTIONAL_FIELDS = {
-    "languagePolicy",
     "materialDescription",
 }
 QUERY_REQUIRED_FIELDS = {
@@ -50,7 +48,7 @@ QUERY_REQUIRED_FIELDS = {
     "outputFormat",
     "requestedTimeRanges",
 }
-QUERY_OPTIONAL_FIELDS = {"languagePolicy"}
+QUERY_OPTIONAL_FIELDS = set()
 FORMAT_CHECK_NAME = "gemini-transcript-v1"
 TIMESTAMP_PATTERN = re.compile(r"^([0-9]{2,}):([0-5][0-9])\.([0-9]{3})$")
 TRANSCRIPT_FIELDS = {
@@ -266,11 +264,6 @@ def validate_saved_response(saved_response):
         output_type, saved_response["outputFormat"]
     )
     _validate_source_time_range(saved_response["sourceTimeRange"])
-    if "languagePolicy" in saved_response:
-        common.validate_language_policy(saved_response["languagePolicy"])
-    if output_type == "transcript":
-        if "languagePolicy" not in saved_response:
-            raise SavedResponseError("Transcript saved response requires languagePolicy")
     router_result = request_log.validate_router_result(
         dict(saved_response["routerResult"])
     )
@@ -396,8 +389,6 @@ def build_saved_response(
         "responseSha256": response_hash,
         "responseJsonText": response_json_text,
     }
-    if "languagePolicy" in request:
-        saved_response["languagePolicy"] = request["languagePolicy"]
     if request["outputFormat"]["name"] == "gemini-transcript":
         format_check, coverage = check_transcript_response(
             response, request["requestedTimeRange"]
@@ -460,8 +451,6 @@ def validate_material_entry(entry, video_id):
     )
     if not entry["coveredTimeRanges"]:
         raise SavedResponseError("Indexed material must cover a non-empty time range")
-    if "languagePolicy" in entry:
-        common.validate_language_policy(entry["languagePolicy"])
     if "materialDescription" in entry and (
         not isinstance(entry["materialDescription"], str)
         or not entry["materialDescription"].strip()
@@ -537,8 +526,6 @@ def _material_entry(
         "outputFormat": saved_response["outputFormat"],
         "coveredTimeRanges": coverage,
     }
-    if "languagePolicy" in saved_response:
-        entry["languagePolicy"] = saved_response["languagePolicy"]
     if material_description is not None:
         if not isinstance(material_description, str) or not material_description.strip():
             raise SavedResponseError("Material description must be non-empty")
@@ -704,8 +691,6 @@ def validate_query(query):
     )
     if not query["requestedTimeRanges"]:
         raise SavedResponseError("Material query requires a non-empty time range")
-    if "languagePolicy" in query:
-        common.validate_language_policy(query["languagePolicy"])
     return query
 
 
@@ -713,8 +698,6 @@ def _compatibility_reasons(entry, query):
     reasons = []
     if entry["outputFormat"] != query["outputFormat"]:
         reasons.append("output_format")
-    if "languagePolicy" in query and entry.get("languagePolicy") != query["languagePolicy"]:
-        reasons.append("language_policy")
     return reasons
 
 

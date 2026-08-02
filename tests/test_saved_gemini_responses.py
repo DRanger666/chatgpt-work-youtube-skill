@@ -32,6 +32,10 @@ REMOVED_TIME_COORDINATE_FIELDS = (
     "timestamps" + "RelativeTo",
     "timestamp" + "Basis",
 )
+REMOVED_LANGUAGE_FIELDS = (
+    "language" + "Policy",
+    "source" + "Language",
+)
 
 
 def timestamp(milliseconds):
@@ -145,7 +149,6 @@ class SavedResponseFixture(unittest.TestCase):
         completed_ms=None,
         generated=None,
         finish_reason="STOP",
-        language_policy=None,
         prompt=None,
     ):
         transcript = output_type == "transcript"
@@ -167,11 +170,6 @@ class SavedResponseFixture(unittest.TestCase):
             "video_material",
             output_type=output_type,
             output_format=output_format,
-            language_policy=(
-                language_policy
-                if language_policy is not None
-                else ({"sourceLanguage": "original"} if transcript else None)
-            ),
             started_at=T0,
         )
         if generated is None:
@@ -271,7 +269,6 @@ class SavedGeminiResponseTests(SavedResponseFixture):
             "video_material",
             output_type="transcript",
             output_format={"name": "gemini-transcript", "version": 1},
-            language_policy={"sourceLanguage": "original"},
             retry_reason="User requested another transcription run",
             started_at="2026-08-01T10:10:00Z",
         )
@@ -430,6 +427,16 @@ class SavedGeminiResponseTests(SavedResponseFixture):
             [{"startMs": 600_000, "endMs": 850_000}],
         )
 
+    def test_transcript_preserves_segment_language_and_source_text(self):
+        generated = transcript_content()
+        generated["segments"][0]["language"] = "hi"
+        generated["segments"][0]["text"] = "नमस्ते"
+        item = self.build_response(generated=generated)
+        envelope = json.loads(item["saved"]["responseJsonText"])
+        retained = json.loads(envelope["candidates"][0]["content"]["parts"][0]["text"])
+        self.assertEqual(retained["segments"][0]["language"], "hi")
+        self.assertEqual(retained["segments"][0]["text"], "नमस्ते")
+
     def test_malformed_transcript_is_saved_but_has_no_covered_time(self):
         item = self.build_response(generated={"not": "a transcript"})
         self.assertEqual(item["saved"]["formatCheck"]["status"], "failed")
@@ -547,12 +554,16 @@ class SavedGeminiResponseTests(SavedResponseFixture):
                 }
             )
 
-    def test_saved_responses_reject_removed_timestamp_coordinate_fields(self):
+    def test_saved_responses_reject_removed_metadata_fields(self):
         item = self.build_response()
-        for field in REMOVED_TIME_COORDINATE_FIELDS:
+        for field in (*REMOVED_TIME_COORDINATE_FIELDS, *REMOVED_LANGUAGE_FIELDS):
             with self.subTest(field=field):
                 changed = copy.deepcopy(item["saved"])
-                changed[field] = "full_video"
+                changed[field] = (
+                    "full_video"
+                    if field in REMOVED_TIME_COORDINATE_FIELDS
+                    else "removed"
+                )
                 with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
                     saved.validate_saved_response(changed)
 
@@ -594,8 +605,6 @@ class MaterialIndexTests(SavedResponseFixture):
             "requestedTimeRanges": [{"startMs": start, "endMs": end}],
             **extra,
         }
-        if output_type == "transcript":
-            query.setdefault("languagePolicy", {"sourceLanguage": "original"})
         return query
 
     def test_index_contains_search_fields_only(self):
@@ -762,45 +771,56 @@ class MaterialIndexTests(SavedResponseFixture):
         self.assertEqual(verified["verificationStatus"], "verified")
         self.assertEqual(saved.plan_missing_ranges(verified)["missingTimeRanges"], [])
 
-    def test_incompatible_language_and_other_output_type_do_not_satisfy_query(self):
-        english = self.build_response(
+    def test_source_onscreen_text_is_saved_and_searched_without_language_fragmentation(self):
+        visible_text = "মূল দৃশ্যপট"
+        onscreen = self.build_response(
             output_type="systematic_onscreen_text",
-            language_policy={"sourceLanguage": "en"},
+            generated=visible_text,
         )
         summary = self.build_response(output_type="summary")
         index = saved.new_material_index(VIDEO_ID, updated_at=T0)
-        self.add(index, english)
+        self.add(index, onscreen)
         self.add(index, summary)
-        query = self.query(
-            output_type="systematic_onscreen_text",
-            languagePolicy={"sourceLanguage": "bn"},
-        )
+        query = self.query(output_type="systematic_onscreen_text")
         plan = saved.find_material(index, query)
-        self.assertEqual(plan["coverageStatus"], "missing")
-        self.assertEqual(plan["coverageCases"], ["incompatible", "missing"])
-        self.assertEqual(len(plan["incompatibleMaterials"]), 1)
+        self.assertEqual(plan["coverageStatus"], "complete")
+        self.assertEqual(plan["coverageCases"], ["exact"])
+        self.assertEqual(
+            plan["selectedMaterials"][0]["savedResponseId"],
+            onscreen["saved"]["savedResponseId"],
+        )
+        self.assertIn(visible_text, onscreen["saved"]["responseJsonText"])
+        for value in (onscreen["request"], onscreen["saved"], index, plan):
+            serialized = json.dumps(value, ensure_ascii=False)
+            for field in REMOVED_LANGUAGE_FIELDS:
+                self.assertNotIn(field, serialized)
 
-    def test_material_search_boundaries_reject_removed_timestamp_coordinate_fields(self):
+    def test_material_search_boundaries_reject_removed_metadata_fields(self):
         item = self.build_response()
         index = saved.new_material_index(VIDEO_ID, updated_at=T0)
         self.add(index, item)
 
-        for field in REMOVED_TIME_COORDINATE_FIELDS:
+        for field in (*REMOVED_TIME_COORDINATE_FIELDS, *REMOVED_LANGUAGE_FIELDS):
+            removed_value = (
+                "full_video"
+                if field in REMOVED_TIME_COORDINATE_FIELDS
+                else "removed"
+            )
             with self.subTest(boundary="index", field=field):
                 changed_index = copy.deepcopy(index)
-                changed_index["materials"][0][field] = "full_video"
+                changed_index["materials"][0][field] = removed_value
                 with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
                     saved.validate_material_index(changed_index)
 
             with self.subTest(boundary="query", field=field):
                 changed_query = self.query()
-                changed_query[field] = "full_video"
+                changed_query[field] = removed_value
                 with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
                     saved.validate_query(changed_query)
 
             with self.subTest(boundary="search-plan", field=field):
                 changed_plan = saved.find_material(index, self.query())
-                changed_plan[field] = "full_video"
+                changed_plan[field] = removed_value
                 with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
                     saved.plan_missing_ranges(changed_plan)
 
@@ -811,7 +831,7 @@ class MaterialIndexTests(SavedResponseFixture):
                     "outputType": "summary",
                     "outputFormat": common.OUTPUT_FORMATS["summary"],
                     "missingTimeRanges": [{"startMs": 0, "endMs": 600_000}],
-                    field: "full_video",
+                    field: removed_value,
                 }
                 with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
                     saved.plan_chunks(missing_plan)
@@ -957,7 +977,6 @@ class MaterialIndexTests(SavedResponseFixture):
                         "outputType": "transcript",
                         "outputFormat": common.OUTPUT_FORMATS["transcript"],
                         "coveredTimeRanges": [interval],
-                        "languagePolicy": {"sourceLanguage": "original"},
                     }
                 )
             index = {

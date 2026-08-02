@@ -28,6 +28,10 @@ MODEL = "gemini-3.6-flash"
 T0 = "2026-08-01T10:00:00Z"
 T1 = "2026-08-01T10:00:01Z"
 T2 = "2026-08-01T10:00:02Z"
+REMOVED_LANGUAGE_FIELDS = (
+    "language" + "Policy",
+    "source" + "Language",
+)
 
 
 def request_value(video_url=None, prompt="Inspect this interval.", start=0, end=600):
@@ -147,7 +151,6 @@ class RequestLogTests(unittest.TestCase):
             "video_material",
             output_type="transcript",
             output_format={"name": "gemini-transcript", "version": 1},
-            language_policy={"sourceLanguage": "original"},
             started_at=kwargs.pop("started_at", T0),
             **kwargs,
         )
@@ -187,13 +190,14 @@ class RequestLogTests(unittest.TestCase):
         )
         self.assertEqual(first_id, second_id)
 
-    def test_transcript_run_fixes_reusable_metadata_and_retains_exact_prompt(self):
+    def test_transcript_run_retains_its_exact_source_language_prompt(self):
         log, request, run = self.start_transcript()
         self.assertEqual(request["contentClass"], "video_material")
         self.assertEqual(request["outputType"], "transcript")
         self.assertEqual(request["outputFormat"], {"name": "gemini-transcript", "version": 1})
-        self.assertEqual(request["languagePolicy"], {"sourceLanguage": "original"})
         self.assertEqual(request["promptText"], TRANSCRIPT_PROMPT)
+        for field in REMOVED_LANGUAGE_FIELDS:
+            self.assertNotIn(field, request)
         self.assertEqual(run["runNumber"], 1)
         self.assertEqual(run["runStatus"], "pending")
         self.assertNotIn("retryAuthorization", run)
@@ -221,57 +225,43 @@ class RequestLogTests(unittest.TestCase):
                 self.new_log(), self.request_path, VIDEO_ID, ENDPOINT, MODEL, "POST",
                 "video_material", output_type="transcript",
                 output_format={"name": "gemini-transcript", "version": 1},
-                language_policy={"sourceLanguage": "original"},
                 started_at=T0,
             )
 
-    def test_reusable_metadata_is_complete_before_a_run_starts(self):
-        transcript_request = request_value(prompt=TRANSCRIPT_PROMPT)
-        transcript_request["generationConfig"]["responseJsonSchema"] = (
-            TRANSCRIPT_RESPONSE_SCHEMA
-        )
-        transcript_path = write_request(
-            self.directory / "metadata-transcript.json", transcript_request
-        )
-        with self.assertRaisesRegex(request_log.RequestLogError, "original-language"):
-            request_log.start_run(
-                self.new_log(),
-                transcript_path,
-                VIDEO_ID,
-                ENDPOINT,
-                MODEL,
-                "POST",
-                "video_material",
-                output_type="transcript",
-                output_format={"name": "gemini-transcript", "version": 1},
-                started_at=T0,
-            )
-
-    def test_request_logs_and_cli_reject_removed_timestamp_coordinate_fields(self):
+    def test_request_logs_and_cli_reject_removed_metadata_fields(self):
         log, _, _ = self.start_transcript()
-        for field in ("timestamps" + "RelativeTo", "timestamp" + "Basis"):
+        removed_fields = (
+            "timestamps" + "RelativeTo",
+            "timestamp" + "Basis",
+            *REMOVED_LANGUAGE_FIELDS,
+        )
+        for field in removed_fields:
             with self.subTest(field=field):
                 changed = copy.deepcopy(log)
-                changed["requests"][0][field] = "full_video"
+                changed["requests"][0][field] = "removed"
                 with self.assertRaisesRegex(common.YouTubeWorkError, "unsupported fields"):
                     request_log.validate_request_log(changed)
 
         parser = request_log.build_parser()
-        removed_flag = "--timestamps-" + "relative-to"
-        arguments = [
-            "start-run",
-            "--request-log", "log.json",
-            "--request", "request.json",
-            "--endpoint", ENDPOINT,
-            "--model", MODEL,
-            "--video", VIDEO_ID,
-            "--output", "updated-log.json",
-            "--content-class", "direct_answer",
-            removed_flag, "full_video",
-        ]
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                parser.parse_args(arguments)
+        for removed_flag in (
+            "--timestamps-" + "relative-to",
+            "--language-" + "policy",
+        ):
+            with self.subTest(flag=removed_flag):
+                arguments = [
+                    "start-run",
+                    "--request-log", "log.json",
+                    "--request", "request.json",
+                    "--endpoint", ENDPOINT,
+                    "--model", MODEL,
+                    "--video", VIDEO_ID,
+                    "--output", "updated-log.json",
+                    "--content-class", "direct_answer",
+                    removed_flag, "removed",
+                ]
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        parser.parse_args(arguments)
 
     def test_translation_is_not_a_reusable_output_type(self):
         with self.assertRaisesRegex(

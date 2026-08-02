@@ -253,11 +253,5 @@ def validate_output_format(output_type: str, output_format) -> dict:
     return dict(output_format)
 
 
-def validate_language_policy(value, label="language policy") -> dict:
-    if not isinstance(value, dict) or not value:
-        raise YouTubeWorkError(f"{label} must be a non-empty object")
-    return value
-
-
 def is_subset(intervals, container) -> bool:
     return not subtract_intervals(intervals, container)

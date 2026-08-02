@@ -26,7 +26,6 @@ REQUEST_REQUIRED_FIELDS = {
 REQUEST_OPTIONAL_FIELDS = {
     "outputType",
     "outputFormat",
-    "languagePolicy",
 }
 RUN_REQUIRED_FIELDS = {
     "runNumber",
@@ -245,14 +244,6 @@ def validate_gemini_endpoint(endpoint, model):
     if match.group(1) != model:
         raise RequestLogError("Gemini endpoint and model differ")
     return endpoint
-
-
-def validate_reusable_metadata(output_type, language_policy=None):
-    if output_type == "transcript":
-        if language_policy != {"sourceLanguage": "original"}:
-            raise RequestLogError(
-                "Transcript material requires original-language policy"
-            )
 
 
 def validate_attempt(attempt, expected_number=None, previous=None):
@@ -568,12 +559,6 @@ def validate_request_entry(request):
         if "outputType" not in request or "outputFormat" not in request:
             raise RequestLogError("video_material requires output type and format")
         common.validate_output_format(request["outputType"], request["outputFormat"])
-        if "languagePolicy" in request:
-            common.validate_language_policy(request["languagePolicy"])
-        validate_reusable_metadata(
-            request["outputType"],
-            request.get("languagePolicy"),
-        )
     else:
         forbidden = REQUEST_OPTIONAL_FIELDS & request.keys()
         if forbidden:
@@ -688,7 +673,6 @@ def _build_request_entry(
     content_class,
     output_type=None,
     output_format=None,
-    language_policy=None,
 ):
     validate_gemini_endpoint(endpoint, model)
     _validate_non_empty_string(method, "method")
@@ -715,9 +699,6 @@ def _build_request_entry(
                 raise RequestLogError(
                     "Transcript material requires the transcript-only request contract"
                 )
-        if language_policy is not None:
-            common.validate_language_policy(language_policy)
-        validate_reusable_metadata(output_type, language_policy)
     request_id = derive_request_id(
         inspection["normalizedRequestSha256"],
         endpoint,
@@ -741,12 +722,7 @@ def _build_request_entry(
     if content_class == "video_material":
         entry["outputType"] = output_type
         entry["outputFormat"] = output_format
-        if language_policy is not None:
-            entry["languagePolicy"] = language_policy
-    elif any(
-        value is not None
-        for value in (output_type, output_format, language_policy)
-    ):
+    elif any(value is not None for value in (output_type, output_format)):
         raise RequestLogError("One-time content classes cannot declare reusable output fields")
     return entry
 
@@ -787,7 +763,6 @@ def start_run(
     content_class,
     output_type=None,
     output_format=None,
-    language_policy=None,
     retry_reason=None,
     authorized_at=None,
     started_at=None,
@@ -807,7 +782,6 @@ def start_run(
         content_class,
         output_type,
         output_format,
-        language_policy,
     )
     existing_pending = [
         run
@@ -1100,12 +1074,6 @@ def mark_run_interrupted(
     return request, run
 
 
-def _load_language_policy(path):
-    if path is None:
-        return None
-    return common.validate_language_policy(common.load_json(Path(path)))
-
-
 def _metadata_from_args(args):
     if args.transcript:
         forbidden = (
@@ -1113,7 +1081,6 @@ def _metadata_from_args(args):
             args.output_type,
             args.output_format_name,
             args.output_format_version,
-            args.language_policy,
         )
         if any(value is not None for value in forbidden):
             raise RequestLogError("--transcript fixes its metadata and cannot be overridden")
@@ -1121,7 +1088,6 @@ def _metadata_from_args(args):
             "content_class": "video_material",
             "output_type": "transcript",
             "output_format": {"name": "gemini-transcript", "version": 1},
-            "language_policy": {"sourceLanguage": "original"},
         }
     if args.content_class is None:
         raise RequestLogError("Generic Gemini requests require --content-class")
@@ -1137,7 +1103,6 @@ def _metadata_from_args(args):
         "content_class": args.content_class,
         "output_type": args.output_type,
         "output_format": output_format,
-        "language_policy": _load_language_policy(args.language_policy),
     }
 
 
@@ -1313,7 +1278,6 @@ def build_parser():
     start.add_argument("--output-type")
     start.add_argument("--output-format-name")
     start.add_argument("--output-format-version", type=int)
-    start.add_argument("--language-policy")
     start.add_argument("--retry-reason")
     start.add_argument("--authorized-at")
     start.add_argument("--started-at")
