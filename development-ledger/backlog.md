@@ -80,7 +80,7 @@ feature, investigation, design, and refinement work.
   - Fifteen offline tests pass.
   - MCP behavior, cache semantics, Gemini routing, credential handling, and
     unrelated code remain unchanged.
-- Related commits: `caee5b6`, `f7a7289`.
+- Related commits: `112bbe3`, `988a076`.
 
 ### LEDGER-006 — Add Gemini transcript-only mode
 
@@ -104,13 +104,13 @@ feature, investigation, design, and refinement work.
 - Outcome:
   - At initial completion, generated requests exactly matched the successful
     cached Raaz and Haal-e-Dil trial requests. The later timestamp correction
-    in `caee5b6` changed the prompt and response schema, so branch-tip requests
+    in `112bbe3` changed the prompt and response schema, so branch-tip requests
     have new fingerprints and do not reuse those original trial cache records.
   - Fourteen offline tests pass: three transcript-builder tests and eleven
     existing routing and cache tests.
   - Caption routing, cache v2, Gemini project routing, credential handling,
     chunk planning, and prompt-driven analysis behavior remain unchanged.
-- Implementation commits: `d62c964`, `6306991`.
+- Implementation commits: `3cc3f3f`, `16da400`.
 
 ### LEDGER-005 — Confirm independent Gemini project ownership
 
