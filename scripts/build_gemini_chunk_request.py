@@ -12,7 +12,7 @@ TRANSCRIPT_PROMPT = (
     "correct them. Use the original language and its native script. Separate sung "
     "from spoken passages. Do not describe visuals, music, mood, story, themes, "
     "people, or actions. Do not add commentary. Every timestamp must be a string in "
-    "fixed MM:SS.mmm format relative to the complete source video; for example, "
+    "fixed MM:SS.mmm format measured from the beginning of the source video; for example, "
     "5 minutes 26.5 seconds must be written as 05:26.500, never as 526.5 or as "
     "elapsed seconds. The minute component must have at least two digits and may "
     "exceed 99 for long videos. Cover the complete supplied interval. Mark unclear "
@@ -120,11 +120,11 @@ def main() -> None:
             }
         ],
         "generationConfig": {
-            "responseMimeType": "application/json",
             "maxOutputTokens": max_output_tokens,
         },
     }
     if args.transcript_only:
+        request["generationConfig"]["responseMimeType"] = "application/json"
         request["generationConfig"]["responseJsonSchema"] = TRANSCRIPT_RESPONSE_SCHEMA
 
     output_path = Path(args.output).resolve()

@@ -2,6 +2,28 @@
 
 Keep the repository history useful as long-term development documentation.
 
+## Documentation ownership
+
+Read [`REPOSITORY_MAP.md`](REPOSITORY_MAP.md) before adding, deleting,
+renaming, merging, or repurposing documentation. Update the map in the same
+commit as any structural or ownership change.
+
+Keep each concern in its assigned owner:
+
+- `SKILL.md` owns runtime source order and agent procedure.
+- `references/contracts.md` owns exact current paths, pins, commands, fields,
+  and operating values.
+- `development-ledger/design/` records design rationale and boundaries without
+  redefining the whole runtime workflow.
+- `development-ledger/backlog.md` preserves work status and history; do not
+  rewrite an old completed entry to make it appear that a later decision had
+  already been made.
+- `development-ledger/README.md` remains the current directory-local index.
+
+Link to the owning source instead of copying a full workflow into another
+document. When executable behavior and its owning documentation disagree,
+treat the contradiction as a defect and resolve it before release.
+
 ## Commit structure
 
 - Put one coherent concern in each commit.
@@ -26,7 +48,7 @@ Do not use vague subjects such as `update`, `fix`, or `changes`.
 - Load the GitHub PAT from private credential storage only for the active
   network operation.
 - Never place a PAT in a remote URL, repository configuration, commit,
-  generated artifact, terminal log, or documentation.
+  generated file, terminal log, or documentation.
 
 ## Before committing
 

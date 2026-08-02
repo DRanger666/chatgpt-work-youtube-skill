@@ -47,6 +47,7 @@ class TranscriptRequestTests(unittest.TestCase):
         self.assertIn("do not summarize", prompt)
         self.assertIn("Do not describe visuals", prompt)
         self.assertEqual(generation["maxOutputTokens"], 8192)
+        self.assertEqual(generation["responseMimeType"], "application/json")
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(
             schema["properties"]["segments"]["items"]["properties"]["vocal_type"]["enum"],
@@ -74,7 +75,7 @@ class TranscriptRequestTests(unittest.TestCase):
         self.assertIsNotNone(re.fullmatch(pattern, "120:00.000"))
         self.assertIsNone(re.fullmatch(pattern, "9:00.000"))
 
-    def test_prompt_driven_request_is_unchanged(self):
+    def test_prompt_driven_request_uses_plain_text_output(self):
         result, request = self.build("--prompt", "Analyze this interval.")
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -84,10 +85,7 @@ class TranscriptRequestTests(unittest.TestCase):
         )
         self.assertEqual(
             request["generationConfig"],
-            {
-                "responseMimeType": "application/json",
-                "maxOutputTokens": 2048,
-            },
+            {"maxOutputTokens": 2048},
         )
 
     def test_transcript_mode_rejects_a_custom_prompt(self):
