@@ -774,6 +774,87 @@ class MaterialIndexTests(SavedResponseFixture):
             result["missingTimeRanges"], [{"startMs": 300_000, "endMs": 600_000}]
         )
 
+    def test_default_long_video_chunks_reproduce_validated_movie_plan(self):
+        plan = {
+            "fileFormatVersion": 1,
+            "videoId": VIDEO_ID,
+            "outputType": "summary",
+            "outputFormat": common.OUTPUT_FORMATS["summary"],
+            "missingTimeRanges": [{"startMs": 0, "endMs": 8_100_000}],
+        }
+        result = saved.plan_chunks(plan)
+        self.assertEqual(result["chunkSeconds"], 1_800)
+        self.assertEqual(result["overlapSeconds"], 0)
+        self.assertEqual(
+            result["chunks"],
+            [
+                {"startMs": 0, "endMs": 1_800_000},
+                {"startMs": 1_800_000, "endMs": 3_600_000},
+                {"startMs": 3_600_000, "endMs": 5_400_000},
+                {"startMs": 5_400_000, "endMs": 7_200_000},
+                {"startMs": 7_200_000, "endMs": 8_100_000},
+            ],
+        )
+
+    def test_chunk_plan_splits_each_missing_range_without_filling_gaps(self):
+        plan = {
+            "fileFormatVersion": 1,
+            "videoId": VIDEO_ID,
+            "outputType": "transcript",
+            "outputFormat": common.OUTPUT_FORMATS["transcript"],
+            "missingTimeRanges": [
+                {"startMs": 0, "endMs": 900_000},
+                {"startMs": 1_200_000, "endMs": 1_500_000},
+            ],
+        }
+        result = saved.plan_chunks(plan, chunk_seconds=600)
+        self.assertEqual(
+            result["chunks"],
+            [
+                {"startMs": 0, "endMs": 600_000},
+                {"startMs": 600_000, "endMs": 900_000},
+                {"startMs": 1_200_000, "endMs": 1_500_000},
+            ],
+        )
+
+    def test_chunk_plan_applies_requested_boundary_overlap(self):
+        plan = {
+            "fileFormatVersion": 1,
+            "videoId": VIDEO_ID,
+            "outputType": "transcript",
+            "outputFormat": common.OUTPUT_FORMATS["transcript"],
+            "missingTimeRanges": [{"startMs": 0, "endMs": 1_200_000}],
+        }
+        result = saved.plan_chunks(plan, chunk_seconds=600, overlap_seconds=4)
+        self.assertEqual(
+            result["chunks"],
+            [
+                {"startMs": 0, "endMs": 600_000},
+                {"startMs": 596_000, "endMs": 1_196_000},
+                {"startMs": 1_192_000, "endMs": 1_200_000},
+            ],
+        )
+
+    def test_chunk_plan_rejects_invalid_parameters_and_noncanonical_input(self):
+        plan = {
+            "fileFormatVersion": 1,
+            "videoId": VIDEO_ID,
+            "outputType": "summary",
+            "outputFormat": common.OUTPUT_FORMATS["summary"],
+            "missingTimeRanges": [{"startMs": 0, "endMs": 600_000}],
+        }
+        for size, overlap in ((0, 0), (600, -1), (600, 600)):
+            with self.subTest(size=size, overlap=overlap):
+                with self.assertRaises(saved.SavedResponseError):
+                    saved.plan_chunks(plan, size, overlap)
+        noncanonical = copy.deepcopy(plan)
+        noncanonical["missingTimeRanges"] = [
+            {"startMs": 300_000, "endMs": 600_000},
+            {"startMs": 0, "endMs": 300_000},
+        ]
+        with self.assertRaisesRegex(saved.SavedResponseError, "normalized"):
+            saved.plan_chunks(noncanonical)
+
     def test_randomized_interval_planning_matches_interval_union(self):
         rng = random.Random(20260801)
         for case_number in range(5_500):
@@ -870,6 +951,7 @@ class CommandSurfaceTests(unittest.TestCase):
                 "find-material",
                 "verify-selected",
                 "plan-missing-ranges",
+                "plan-chunks",
             },
         )
 

@@ -1017,6 +1017,76 @@ def plan_missing_ranges(plan):
     }
 
 
+def _validate_missing_range_plan(plan):
+    required = {
+        "fileFormatVersion",
+        "videoId",
+        "outputType",
+        "outputFormat",
+        "missingTimeRanges",
+    }
+    common.require_exact_fields(plan, required, set(), "missing-range plan")
+    if plan["fileFormatVersion"] != common.FILE_FORMAT_VERSION:
+        raise SavedResponseError("Unsupported missing-range-plan format version")
+    video_id = common.normalize_youtube_video_id(plan["videoId"])
+    if video_id != plan["videoId"]:
+        raise SavedResponseError("Missing-range-plan video ID must be normalized")
+    output_format = common.validate_output_format(
+        plan["outputType"], plan["outputFormat"]
+    )
+    missing = common.normalize_intervals(
+        plan["missingTimeRanges"], "missing time ranges"
+    )
+    if missing != plan["missingTimeRanges"]:
+        raise SavedResponseError("Missing time ranges must be normalized")
+    return {
+        "fileFormatVersion": common.FILE_FORMAT_VERSION,
+        "videoId": video_id,
+        "outputType": plan["outputType"],
+        "outputFormat": output_format,
+        "missingTimeRanges": missing,
+    }
+
+
+def plan_chunks(missing_range_plan, chunk_seconds=1_800, overlap_seconds=0):
+    plan = _validate_missing_range_plan(copy.deepcopy(missing_range_plan))
+    if (
+        not isinstance(chunk_seconds, int)
+        or isinstance(chunk_seconds, bool)
+        or chunk_seconds <= 0
+    ):
+        raise SavedResponseError("Chunk size must be a positive integer")
+    if (
+        not isinstance(overlap_seconds, int)
+        or isinstance(overlap_seconds, bool)
+        or overlap_seconds < 0
+        or overlap_seconds >= chunk_seconds
+    ):
+        raise SavedResponseError("Overlap must satisfy 0 <= overlap < chunk size")
+
+    chunk_ms = chunk_seconds * 1_000
+    overlap_ms = overlap_seconds * 1_000
+    chunks = []
+    for interval in plan["missingTimeRanges"]:
+        start = interval["startMs"]
+        while start < interval["endMs"]:
+            end = min(start + chunk_ms, interval["endMs"])
+            chunks.append({"startMs": start, "endMs": end})
+            if end == interval["endMs"]:
+                break
+            start = end - overlap_ms
+
+    return {
+        "fileFormatVersion": common.FILE_FORMAT_VERSION,
+        "videoId": plan["videoId"],
+        "outputType": plan["outputType"],
+        "outputFormat": plan["outputFormat"],
+        "chunkSeconds": chunk_seconds,
+        "overlapSeconds": overlap_seconds,
+        "chunks": chunks,
+    }
+
+
 def command_locate(args):
     video_id = common.normalize_youtube_video_id(args.video)
     print(
@@ -1138,6 +1208,14 @@ def command_plan_missing(args):
     return 0
 
 
+def command_plan_chunks(args):
+    plan = common.load_json(Path(args.missing_ranges_plan))
+    result = plan_chunks(plan, args.chunk_seconds, args.overlap_seconds)
+    common.write_json(Path(args.output), result)
+    print(Path(args.output).resolve())
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Save Gemini responses and find reusable YouTube material"
@@ -1203,6 +1281,13 @@ def build_parser():
     missing.add_argument("--search-plan", required=True)
     missing.add_argument("--output", required=True)
     missing.set_defaults(handler=command_plan_missing)
+
+    chunks = subparsers.add_parser("plan-chunks")
+    chunks.add_argument("--missing-ranges-plan", required=True)
+    chunks.add_argument("--chunk-seconds", type=int, default=1_800)
+    chunks.add_argument("--overlap-seconds", type=int, default=0)
+    chunks.add_argument("--output", required=True)
+    chunks.set_defaults(handler=command_plan_chunks)
     return parser
 
 
