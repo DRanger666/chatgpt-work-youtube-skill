@@ -12,7 +12,7 @@ Google Drive or Gemini.
 
 ## Keep the workflow safe
 
-- Keep the portable installation named `youtube-mcp-portable`, with
+- Keep the portable installation at `/workspace/youtube-mcp-portable`, with
   `materials/` and `workspace/` inside it.
 - Never display, quote, log, or commit API keys. Keep credential files out of
   prompts, saved responses, request logs, material indexes, `materials/`, and
