@@ -120,11 +120,11 @@ def main() -> None:
             }
         ],
         "generationConfig": {
-            "responseMimeType": "application/json",
             "maxOutputTokens": max_output_tokens,
         },
     }
     if args.transcript_only:
+        request["generationConfig"]["responseMimeType"] = "application/json"
         request["generationConfig"]["responseJsonSchema"] = TRANSCRIPT_RESPONSE_SCHEMA
 
     output_path = Path(args.output).resolve()
