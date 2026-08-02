@@ -74,6 +74,41 @@ feature, investigation, design, and refinement work.
 
 ## Completed refinements
 
+### LEDGER-013 — Clarify documentation ownership and restore long-video planning
+
+- Status: Completed
+- Type: Refinement and regression correction
+- Layer: Repository documentation and Gemini request planning
+- Evidence:
+  - `youtube-saved-work.md` combined whole-system routing, saved-response
+    search, and request-history design under a misleading name.
+  - `gemini-interactive-quota-pool.md` duplicated request-log rules.
+  - Replacing the earlier cache implementation removed the deterministic
+    `plan-chunks` command even though the runtime guidance still relied on it.
+  - A real 2-hour-15-minute whole-video request failed while its
+    `0s`–`1800s` clip succeeded, so bounded long-video planning remains an
+    evidence-backed operating requirement.
+- Outcome:
+  - Added `REPOSITORY_MAP.md` with concern-specific ownership and a complete
+    maintained-file map.
+  - Split saved Gemini response storage/search from Gemini request execution;
+    merged primary/fallback quota routing into the latter and removed the two
+    misleading broad documents.
+  - Kept `SKILL.md` as the sole runtime source-order authority: MCP material
+    first, saved Gemini material second, and a new Gemini request only for the
+    remaining gap.
+  - Restored deterministic splitting of verified missing ranges, with the
+    tested 1,800-second general default and the 600-second/four-second-overlap
+    transcript policy preserved as distinct operating choices.
+  - Preserved historical ledger entries instead of rewriting them around the
+    new structure.
+- Related documents:
+  - [`../REPOSITORY_MAP.md`](../REPOSITORY_MAP.md)
+  - [`../SKILL.md`](../SKILL.md)
+  - [`../references/contracts.md`](../references/contracts.md)
+  - [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
+  - [`design/gemini-request-execution.md`](design/gemini-request-execution.md)
+
 ### LEDGER-012 — Derive translations instead of storing them
 
 - Status: Completed

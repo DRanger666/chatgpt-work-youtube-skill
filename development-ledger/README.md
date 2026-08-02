@@ -8,6 +8,10 @@ The Git history explains changes that were made. This ledger also records work
 that has not yet been done, why it matters, and what evidence should determine
 the eventual decision.
 
+For repository-wide document ownership, see
+[`REPOSITORY_MAP.md`](../REPOSITORY_MAP.md). This file remains the
+directory-local index for the development ledger.
+
 ## Contents
 
 - [`backlog.md`](backlog.md) is the actionable index of open, deferred,

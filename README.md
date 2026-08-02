@@ -123,24 +123,9 @@ Compare these three videos and synthesize where they agree or disagree.
 Translate and explain what is happening in this captionless video.
 ```
 
-## What is in the repository
+## Repository guide
 
-- `SKILL.md` — the canonical ChatGPT Work workflow.
-- `scripts/ensure_youtube_mcp.sh` — restore and verify the pinned portable MCP.
-- `scripts/call_youtube_mcp.mjs` — make deterministic MCP calls.
-- `scripts/build_gemini_chunk_request.py` — build timestamp-clipped requests.
-- `scripts/saved_gemini_responses.py` — save immutable reusable responses,
-  maintain per-video material indexes, verify selected files, and plan missing
-  coverage.
-- `scripts/gemini_request_log.py` — preserve logical requests, separate
-  authorized runs, router attempts, cooldowns, interruptions, and result
-  references without overwriting history.
-- `scripts/youtube_work_common.py` — shared file, identity, interval, format,
-  and YouTube URL validation.
-- `scripts/gemini_request.py` — route requests through healthy project
-  credentials with bounded retries after verifying the highest pending run.
-- `references/contracts.md` — version, credential, API, saved-response,
-  material-index, and request-log contracts.
-- `development-ledger/` — ongoing investigations, design notes, debugging
-  records, and evidence-backed backlog items.
-- `CONTRIBUTING.md` — repository and commit-history conventions.
+[`REPOSITORY_MAP.md`](REPOSITORY_MAP.md) identifies every maintained file,
+which document owns each concern, and the rule for resolving contradictions.
+Keep that map current whenever a file is added, removed, renamed, or assigned a
+different role.
