@@ -152,10 +152,10 @@ LEDGER-010 is governed by
   - Exact, containing, combined, overlapping, incomplete, incompatible, stale,
     and missing time-range planning worked offline.
   - Selected-file-only downloading and replanning after stale files worked.
-  - Commits `9bff861`, `763d4cf`, `61a60ef`, `2fd89bd`, and `44244aa` preserve
+  - Commits `cec862d`, `1e72955`, `da14941`, `bee56d7`, and `0c7a74d` preserve
     that history.
 - Correction resolved:
-  - Checkpoint `b8598e4` allowed caller-supplied transcript time ranges without
+  - Checkpoint `a9ab341` allowed caller-supplied transcript time ranges without
     checking the returned transcript.
   - The old public interface described saved work as artifacts and the
     per-video list as a manifest; the replacement now uses concrete filenames
@@ -193,7 +193,7 @@ LEDGER-010 is governed by
     verifies only selected response files before exposing missing ranges.
   - The actual planner matches interval-union results across 5,500
     deterministic randomized cases under each validation seed.
-  - Implementation commits: `86c02ad`, `9562b4b`, and `7c1616a`.
+  - Implementation commits: `35b95bb`, `aaeb9c5`, and `69a0e8b`.
 
 ### LEDGER-009 — Maintain a video material index and saved Gemini responses
 
@@ -210,11 +210,11 @@ LEDGER-010 is governed by
 - Evidence retained from the earlier implementation:
   - Per-video lookup, separate output files, file-integrity checking, and index
     rebuilding worked offline under the earlier names.
-  - Commits `7b8a8ef`, `763d4cf`, `61a60ef`, `2fd89bd`, and `44244aa` preserve
+  - Commits `904c14e`, `1e72955`, `da14941`, `bee56d7`, and `0c7a74d` preserve
     that history.
 - Correction resolved:
-  - Checkpoint `b8598e4` could index malformed transcript content as complete.
-  - Commit `f65a965` correctly separated saved-work search from Gemini request
+  - Checkpoint `a9ab341` could index malformed transcript content as complete.
+  - Commit `186c9d2` correctly separated saved-work search from Gemini request
     history, but its stronger crash-reconstruction rules are no longer part of
     the governing design.
 - Completed release work:
@@ -265,7 +265,7 @@ LEDGER-010 is governed by
     free-form review decisions.
   - Failed structured responses and rejected free-form responses remain saved
     but do not create false coverage.
-  - Implementation commits: `86c02ad` and `7c1616a`.
+  - Implementation commits: `35b95bb` and `69a0e8b`.
 
 ### LEDGER-010 — Log Gemini requests and prevent blind repetition
 
@@ -281,16 +281,16 @@ LEDGER-010 is governed by
   run and every safe routing attempt returned to the active workflow, and stop
   for the user's decision when an earlier run has an uncertain outcome.
 - Evidence:
-  - Commit `763d4cf` stopped consuming `ROUTING_JSON` and removed documented
+  - Commit `1e72955` stopped consuming `ROUTING_JSON` and removed documented
     retry authorization and attempt preservation.
-  - Audit checkpoint `b8598e4` proved that the recorded request could differ
+  - Audit checkpoint `a9ab341` proved that the recorded request could differ
     from the file and endpoint sent to the router. It also exposed missing
     cooldown enforcement and contradictory request history.
-  - Commits `49416da`, `2fd89bd`, and `44244aa` contain useful attempt-log and
+  - Commits `d13127f`, `bee56d7`, and `0c7a74d` contain useful attempt-log and
     routing-validation work, but their writer-management interface is rejected.
-  - Commit `f65a965` is a diagnostic checkpoint, not the implementation
+  - Commit `186c9d2` is a diagnostic checkpoint, not the implementation
     specification.
-  - Commit `36b3ae3` still represented status, authorization, and response
+  - Commit `3744de4` still represented status, authorization, and response
     reference as singular request-level fields while allowing authorized
     repeats. A later run could therefore overwrite the history of an earlier
     one.
@@ -397,7 +397,7 @@ LEDGER-010 is governed by
   - Numbered authorized runs retain distinct outcomes, safe routing attempts,
     cooldowns, exact response bindings, and user-mediated interruption
     decisions without session-ownership machinery.
-  - Implementation commits: `332c944`, `86c02ad`, `0f64b21`, and `9562b4b`.
+  - Implementation commits: `5ccbe33`, `35b95bb`, `a3bb2bd`, and `aaeb9c5`.
 - Related documents:
   - [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
   - [`design/gemini-request-execution.md`](design/gemini-request-execution.md)
@@ -428,7 +428,7 @@ LEDGER-010 is governed by
   - Fifteen offline tests pass.
   - MCP behavior, cache semantics, Gemini routing, credential handling, and
     unrelated code remain unchanged.
-- Related commits: `caee5b6`, `f7a7289`.
+- Related commits: `112bbe3`, `988a076`.
 
 ### LEDGER-006 — Add Gemini transcript-only mode
 
@@ -452,13 +452,13 @@ LEDGER-010 is governed by
 - Outcome:
   - At initial completion, generated requests exactly matched the successful
     cached Raaz and Haal-e-Dil trial requests. The later timestamp correction
-    in `caee5b6` changed the prompt and response schema, so branch-tip requests
+    in `112bbe3` changed the prompt and response schema, so branch-tip requests
     have new fingerprints and do not reuse those original trial cache records.
   - Fourteen offline tests pass: three transcript-builder tests and eleven
     existing routing and cache tests.
   - Caption routing, cache v2, Gemini project routing, credential handling,
     chunk planning, and prompt-driven analysis behavior remain unchanged.
-- Implementation commits: `d62c964`, `6306991`.
+- Implementation commits: `3cc3f3f`, `16da400`.
 
 ### LEDGER-005 — Confirm independent Gemini project ownership
 
