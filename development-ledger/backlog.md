@@ -136,6 +136,69 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
 
+### LEDGER-015 — Remove language-policy metadata
+
+- Status: Planned
+- Type: Design correction and implementation
+- Layer: Gemini request metadata, response storage, material indexing, and
+  search
+- Evidence:
+  - `languagePolicy` was introduced to distinguish source-language material
+    from saved translations. LEDGER-012 subsequently removed translation as a
+    saved and searchable output because ChatGPT can translate source material
+    on demand.
+  - The remaining validator accepts any non-empty object, while material
+    search compares those objects for exact equality. No controlled set of
+    keys or values gives that comparison a stable meaning.
+  - Transcript mode already requires original spoken language and native
+    script. Its segment-level `language` values record observed content; the
+    additional top-level policy does not alter or clarify that content.
+  - Systematic onscreen text should preserve the text and script visible in
+    the video. A translated rendering is derived material and must not become
+    a separately saved search variant.
+- Decision:
+  - Save source-language material only. Preserve original spoken language in
+    transcripts and original visible text in systematic onscreen-text output.
+  - Translate saved source material on demand in ChatGPT. Do not save, index,
+    or search translated variants.
+  - Remove `languagePolicy`, `sourceLanguage`, `--language-policy`, and any
+    renamed replacement from active storage, identity, indexing, search,
+    request logging, and planning interfaces.
+  - Do not add a constant-valued replacement or a video-wide language label
+    merely to restate the source-language rule. Multilingual and code-switching
+    evidence remains in the saved content itself, including transcript
+    segment-level language values.
+  - Do not divide summaries or systematic visual descriptions into separate
+    search entries according to the language of their generated prose. When a
+    different presentation language is needed, ChatGPT derives it from the
+    saved material at use time.
+- Required implementation:
+  - [ ] Correct the governing storage/search design before changing runtime
+        code.
+  - [ ] Remove the field from request-log fields, request construction APIs,
+        command-line arguments, validators, and immutable-metadata checks.
+  - [ ] Remove it from saved responses, saved-response identity,
+        material-index entries, index rebuilding, material queries, filtering,
+        returned search data, missing-range output, and chunk output.
+  - [ ] Keep original-language transcript and onscreen-text requirements in
+        their output instructions or format contract rather than representing
+        them as stored search metadata.
+  - [ ] Update `SKILL.md`, `references/contracts.md`, active design material,
+        examples, and tests. Preserve completed historical ledger records.
+  - [ ] Add offline tests that reject the removed field at public file and
+        command boundaries, retain transcript segment language content, save
+        source onscreen text without language-policy metadata, and perform
+        material search without language-based fragmentation.
+  - [ ] Run the complete offline suite and skill-package validation without
+        Gemini calls or live Drive writes.
+- Completion rule: Close this item only when the removed active identifiers no
+  longer occur in runtime code, current contracts, active examples, or tests;
+  their appearance inside preserved historical evidence does not count as
+  active support.
+- Related documents:
+  - [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
+  - [`../references/contracts.md`](../references/contracts.md)
+
 ## Completed refinements
 
 ### LEDGER-013 — Clarify documentation ownership and restore long-video planning
