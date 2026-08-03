@@ -387,6 +387,10 @@ feature, investigation, design, and refinement work.
     transcript ending at `196892` milliseconds. The current checker classified
     both entire responses as `clip_mismatch` and retained none of their proven
     prefix as reusable material.
+  - The YouTube page's stream metadata independently reported approximate
+    durations of `197999`, `198021`, and `198066` milliseconds. The second
+    Gemini response therefore stopped roughly `1.1` seconds before available
+    media ended; this is not merely integer-duration rounding.
   - Treating either difference as an ignorable tolerance would risk hiding
     speech, music, noise, or other content at the video boundary. Repeatedly
     subtracting a rounded second also does not establish the actual source end.
