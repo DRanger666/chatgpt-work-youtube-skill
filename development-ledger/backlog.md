@@ -114,6 +114,89 @@ feature, investigation, design, and refinement work.
   coverage without making a false full-video claim, and a representative live
   acceptance run distinguishes true source end from an unprocessed tail.
 
+### LEDGER-019 — Determine Gemini output budget and video chunk size empirically
+
+- Status: Confirmed
+- Type: Investigation and design
+- Layer: Gemini request construction, chunk planning, and saved coverage
+- Evidence:
+  - A reusable visual request covering the 198-second `I9tX-lFUTrw` video used
+    the generic 2048-token output allowance. Gemini reported 1964 thought
+    tokens, only 80 returned answer tokens, and `MAX_TOKENS`; the response
+    stopped during its first requested outfit description.
+  - The same video interval and prompt with an 8192-token allowance reported
+    2029 thought tokens, 1288 returned answer tokens, and `STOP`; ChatGPT review
+    found the requested chronological wardrobe and city observations through
+    Gemini's reported final processed frame.
+  - That one success proves only that 8192 was sufficient for this 198-second
+    request. It does not establish a safe output allowance or chunk length for
+    longer videos, denser scenes, extensive onscreen text, or more detailed
+    requested observations.
+  - The current contract's 1800-second general-analysis and 600-second
+    transcript defaults came from different tasks and failure modes. They do
+    not by themselves justify one chunk duration for every reusable output
+    type.
+- Questions that must be decided:
+  - How do video duration, scene or text density, requested observation detail,
+    model thought-token use, and returned answer length interact?
+  - Should reusable requests use the model's current maximum output allowance,
+    or can that change cost, latency, thought-token use, or response behavior in
+    ways that make a lower explicit allowance preferable?
+  - Should `summary`, `systematic_visual_description`,
+    `systematic_onscreen_text`, and structured transcript work have different
+    initial chunk sizes and output allowances?
+  - After `MAX_TOKENS`, can a later request safely cover only a remaining
+    interval, or must the failed interval be subdivided and completely
+    reprocessed? Free-form output currently has no mechanically verified
+    completed-through boundary, so its final timestamp alone cannot silently
+    authorize partial coverage.
+  - How much overhead do additional chunks introduce through repeated video
+    ingestion, prompt and thought tokens, latency, request-log and Drive writes,
+    quota exposure, and boundary reconciliation? How much overlap is actually
+    needed for each output type?
+  - What observed criteria define a useful operating range rather than an
+    unsupported universal "sweet spot"?
+- Investigation method:
+  - [ ] At test time, verify the selected Gemini model's supported output limit
+        and token-accounting behavior from current authoritative documentation;
+        do not encode a remembered model limit.
+  - [ ] Reuse the two existing 198-second visual runs as the short baseline;
+        do not spend quota repeating them.
+  - [ ] Select a small, deliberate set of longer and differently dense video
+        intervals. Test reusable output types separately rather than building
+        an exhaustive duration-by-token grid.
+  - [ ] For each authorized run, record requested interval, output type,
+        explicit output allowance, video input tokens, prompt tokens, thought
+        tokens, answer tokens, `finishReason`, latency, reviewed coverage,
+        number of follow-up chunks, and whether any interval was repeated.
+  - [ ] Start with one representative interval and adapt sequentially. Stop a
+        test series once it answers the decision at hand; do not consume quota
+        merely to populate a benchmark table.
+  - [ ] Compare at least these continuation policies after `MAX_TOKENS`:
+        subdivide and reprocess the entire failed interval; or continue only
+        after a format supplies a mechanically verified completed-through
+        boundary. Reject inference from unfinished free-form prose.
+  - [ ] Measure the cost of smaller chunks, including repeated ingestion and
+        per-request overhead, against the cost of discarded truncated output
+        and reprocessing.
+- Decision requirements:
+  - Replace the current universal-sounding 8192 instruction with a tested
+    per-output policy or adaptive procedure. Preserve 8192 only as the observed
+    198-second reference point if broader evidence does not justify more.
+  - Define success as both a non-truncating terminal reason and reviewed
+    completion of the requested interval. `STOP` alone never proves coverage.
+  - Keep `MAX_TOKENS` responses saved and out of the material index unless a
+    future structured format can mechanically validate partial coverage.
+  - Never repeat an identical request as chunk-size adaptation. Every follow-up
+    must change its interval or another justified request parameter and remain
+    recorded as a distinct logical request.
+  - Produce an explicit rule for initial chunk size, reduction behavior,
+    overlap, and stopping conditions for each supported reusable output type.
+- Completion rule: Close only after a quota-conscious live investigation and
+  offline planner tests support a clear policy, the governing contract and
+  `SKILL.md` agree, and no duration or output-token number is presented as
+  universally safe without evidence.
+
 ## Completed portable bootstrap work
 
 ### LEDGER-002 — Harden the npm cache path in fresh Work VMs
