@@ -23,17 +23,62 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-002 — Harden the npm cache path in fresh Work VMs
 
-- Status: Hypothesis
-- Type: Debugging
+- Status: Planned
+- Type: Work VM hardening
 - Layer: Work VM/runtime
-- Evidence: Trial `A1` encountered a permission fault at `/root/.npm` and
-  recovered by switching to a writable temporary cache.
-- Next check:
-  - [ ] Determine whether trials `A2` and `A3` reproduce the permission fault.
-  - [ ] Confirm that setting an isolated writable cache unconditionally is
-        harmless across fresh VMs.
-  - [ ] If confirmed, update `scripts/ensure_youtube_mcp.sh` and test a clean
-        build.
+- Evidence:
+  - Trial `A1` encountered a permission fault at `/root/.npm` and recovered by
+    switching to a writable temporary cache.
+  - The current installer still invokes both `npm ci` and `npm run build`
+    without assigning a cache. In the current Work VM, npm still resolves its
+    default cache to `/root/.npm`, so installation remains dependent on a path
+    outside the writable Work storage.
+  - The installer already creates a unique temporary build directory and
+    removes it through its cleanup trap. An npm cache inside that directory
+    changes no maintained installation path and leaves no persistent state.
+- Decision:
+  - Create one cache directory inside the installer's existing temporary build
+    directory, for example `$build_root/npm-cache`.
+  - Set `NPM_CONFIG_CACHE` explicitly to that directory for both `npm ci` and
+    `npm run build`. Both commands must use the same isolated cache, including
+    npm processes started by lifecycle scripts.
+  - Do not inspect, create, repair, copy, or preserve `/root/.npm`. Do not use
+    the user's home directory, a global npm configuration, the final portable
+    installation, or the persistent credential directory for npm cache data.
+  - Let the existing build-directory cleanup remove the cache after success or
+    failure. Do not add migration, backup, or cache-reuse behavior.
+  - Additional clean-account reproduction is no longer a prerequisite for
+    this correction: the change removes a known external write assumption and
+    has a bounded offline test plus a real clean-build acceptance check.
+- Worker implementation:
+  - [ ] Update only the npm build portion of
+        `scripts/ensure_youtube_mcp.sh`; do not alter the pinned MCP commit,
+        Node version, maintained portable tree, credential handling, or MCP
+        invocation path.
+  - [ ] Add a focused offline installer test with fake `git`, npm, and Node
+        commands. Make the fake npm fail unless both npm invocations receive
+        the same writable cache beneath the temporary build directory, and
+        confirm that an inherited unusable npm-cache value cannot escape the
+        installer override.
+  - [ ] Confirm that the temporary cache is absent after cleanup and never
+        becomes an entry in `/workspace/youtube-mcp-portable`.
+  - [ ] Run the complete offline suite, shell and Python syntax checks,
+        diff-integrity and active-reference scans, and credential-pattern
+        checks. Do not replace the live MCP, access Drive, call Gemini, or
+        update the installed skill.
+- Main/user acceptance after implementation review and merge:
+  - [ ] Run the single combined LEDGER-002/016/017 clean-install sequence.
+  - [ ] Invoke the final installer while the caller's npm cache still resolves
+        to the known unusable `/root/.npm` path; confirm that the installer
+        builds successfully without creating or modifying that path.
+  - [ ] Confirm that the temporary npm cache is removed and that the final
+        portable tree contains only the directories and files defined by
+        LEDGER-017.
+  - [ ] Complete the MCP initialization and tool-enumeration handshake, then
+        complete the persistent-credential checks in LEDGER-017.
+- Completion rule: Keep LEDGER-002, LEDGER-016, and LEDGER-017 open until the
+  same clean-install acceptance run proves the isolated npm build, final
+  portable layout, MCP handshake, and persistent credential bootstrap.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
@@ -74,7 +119,7 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-016 — Simplify the portable installation layout
 
-- Status: Planned
+- Status: Worker implemented; acceptance pending
 - Type: Refinement
 - Layer: Work VM/local portable installation
 - Evidence:
@@ -101,9 +146,10 @@ feature, investigation, design, and refinement work.
     transfer.
 - Decision:
   - Keep `/workspace/youtube-mcp-portable` as the exact installation path.
-  - Keep `app/`, `runtime/`, and `config/`: they respectively contain the
-    pinned MCP application, its pinned Node runtime, and the locally
-    materialized credential file used by the Gemini router.
+  - Keep `app/` and `runtime/` for the pinned MCP application and pinned Node
+    runtime. The first LEDGER-016 implementation also retained `config/` as an
+    interim credential location; LEDGER-017 superseded that choice before
+    acceptance by moving credentials outside the replaceable installation.
   - Remove `bin/` and both generated launchers. Verify and invoke the MCP
     directly through the same Node executable and compiled stdio server used
     by `scripts/call_youtube_mcp.mjs`. Do not retain the unused HTTP entrypoint.
@@ -116,12 +162,12 @@ feature, investigation, design, and refinement work.
   - Implement only the maintained layout. Do not add code for backup,
     carry-over, conversion, or compatibility with the discarded pre-release
     layout.
-  - The resulting maintained layout is exactly:
+  - After the LEDGER-017 correction, the maintained layout accepted by the
+    combined test is exactly:
 
     ```text
     /workspace/youtube-mcp-portable/
       app/
-      config/
       runtime/
       state/
       work/
@@ -130,9 +176,10 @@ feature, investigation, design, and refinement work.
     ```
 
 - Worker implementation:
-  - [x] Change `scripts/ensure_youtube_mcp.sh` to create the maintained layout,
-        consisting of `app/`, `config/`, `runtime/`, `state/`, `work/`,
-        `README.md`, and `VERSION`.
+  - [x] In the initial LEDGER-016 stage, change
+        `scripts/ensure_youtube_mcp.sh` to create `app/`, `config/`, `runtime/`,
+        `state/`, `work/`, `README.md`, and `VERSION`; LEDGER-017 subsequently
+        removed the interim `config/` entry.
   - [x] Remove creation of `bin/youtube-research-mcp` and
         `bin/youtube-research-http`, their permission changes, their generated
         README entries, and the wrapper-only verification condition.
@@ -152,8 +199,9 @@ feature, investigation, design, and refinement work.
         and launchers; preserve historical ledger evidence unchanged.
   - [x] Change every operational path from `$install/workspace/` to
         `$install/work/`, and change the router-state path to
-        `$install/state/gemini-keypool-state.json`. Leave credential handling
-        at `$install/config/youtube-workbench-secrets.env` unchanged.
+        `$install/state/gemini-keypool-state.json`. Credential handling remained
+        unchanged only for this initial stage and was then corrected by
+        LEDGER-017.
   - [x] Add focused repository checks for the maintained paths and removed
         launcher-generation code. Run shell syntax checks, the complete
         existing offline suite, active-reference scans, and skill-package
@@ -170,9 +218,10 @@ feature, investigation, design, and refinement work.
   - No MCP installation, Gemini request, Drive operation, installed-skill
     update, or change to `/workspace/youtube-mcp-portable` was performed.
 - Main/user acceptance after implementation review and merge:
-  - [ ] Run these checks only after LEDGER-017 is implemented. Use its final
-        credential location and portable tree; do not accept the interim
-        `config/` directory as part of the maintained installation.
+  - [ ] Run these checks only after LEDGER-002 and LEDGER-017 are implemented.
+        Use LEDGER-017's final credential location and portable tree; do not
+        accept the interim `config/` directory as part of the maintained
+        installation.
   - [ ] Delete the existing `/workspace/youtube-mcp-portable` installation.
   - [ ] Run the merged installer to build a fresh portable installation from
         the pinned source and dependencies.
@@ -183,15 +232,16 @@ feature, investigation, design, and refinement work.
   - [ ] Confirm that a complex MCP argument file can be read from `work/` and
         that the configured future router-state path is under `state/`.
 - Completion rule: The worker must leave this item open after implementation.
-  Close it only after the main/user acceptance checks pass, the installed MCP
-  handshake succeeds without launcher wrappers, and no active contract,
-  procedure, script, or test refers to the removed installation-root `bin/`,
-  `materials/`, or former `workspace/` directory. The required Node executable
-  remains `runtime/bin/node`.
+  Close LEDGER-002, LEDGER-016, and LEDGER-017 only after their combined
+  main/user acceptance checks pass, the installed MCP handshake succeeds
+  without launcher wrappers, and no active contract, procedure, script, or
+  test refers to the removed installation-root `bin/`, `config/`, `materials/`,
+  or former `workspace/` directory. The required Node executable remains
+  `runtime/bin/node`.
 
 ### LEDGER-017 — Persist Gemini credentials independently of the MCP installation
 
-- Status: Planned
+- Status: Worker implemented; acceptance pending
 - Type: Credential bootstrap correction
 - Layer: Google Drive connector and mounted Work storage
 - Evidence:
@@ -296,7 +346,7 @@ feature, investigation, design, and refinement work.
     installed-skill update was performed.
 - Main/user acceptance after implementation review and merge:
   - [ ] Remove the existing portable installation and rebuild the final
-        LEDGER-016/017 tree from the pinned MCP source.
+        LEDGER-002/016/017 tree from the pinned MCP source.
   - [ ] Complete the MCP initialization and tool-enumeration handshake without
         root launcher scripts or a portable `config/` directory.
   - [ ] If the protected local credential is absent, retrieve the canonical
@@ -305,11 +355,12 @@ feature, investigation, design, and refinement work.
   - [ ] Repeat the credential check and MCP installer invocation using only the
         existing `/workspace` files; confirm that neither operation needs
         another Drive read or changes the credential file.
-- Completion rule: Keep LEDGER-016 and LEDGER-017 open until the combined
-  acceptance checks pass. Completion establishes persistent Drive-to-VM
-  credential bootstrap and a clean reproducible MCP installation; it does not
-  claim that a Gemini key is accepted by the remote API. That live check remains
-  part of the separately planned representative saved-work validation.
+- Completion rule: Keep LEDGER-002, LEDGER-016, and LEDGER-017 open until the
+  combined acceptance checks pass. Completion establishes an isolated npm
+  build, persistent Drive-to-VM credential bootstrap, and a clean reproducible
+  MCP installation; it does not claim that a Gemini key is accepted by the
+  remote API. That live check remains part of the separately planned
+  representative saved-work validation.
 
 ## Completed refinements
 
