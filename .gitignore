@@ -13,3 +13,5 @@ secrets/
 *secret*
 *token*
 *pat*
+!scripts/youtube_credentials.py
+!tests/test_youtube_credentials.py

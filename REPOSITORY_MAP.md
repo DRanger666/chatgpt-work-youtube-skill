@@ -52,6 +52,7 @@ one.
 | [`scripts/saved_gemini_responses.py`](scripts/saved_gemini_responses.py) | Saves reusable Gemini responses, maintains and searches per-video material indexes, verifies selected files, finds missing time ranges, and splits those ranges into deterministic long-video chunks. |
 | [`scripts/gemini_request_log.py`](scripts/gemini_request_log.py) | Maintains per-video logical requests and append-only authorized runs, including retry, interruption, attempt, and result evidence. |
 | [`scripts/gemini_request.py`](scripts/gemini_request.py) | Verifies the highest pending run and routes one request through the primary/fallback Gemini credential pool. |
+| [`scripts/youtube_credentials.py`](scripts/youtube_credentials.py) | Installs and validates the protected local Gemini credential file without exposing its values. |
 | [`scripts/youtube_work_common.py`](scripts/youtube_work_common.py) | Holds shared constants and validation for YouTube IDs, files, output types, hashes, timestamps, and time ranges. |
 
 ## Tests
@@ -63,6 +64,7 @@ one.
 | [`tests/test_saved_gemini_responses.py`](tests/test_saved_gemini_responses.py) | Verifies saved responses, transcript checks, material-index search, missing-range planning, and deterministic chunk planning. |
 | [`tests/test_gemini_request_log.py`](tests/test_gemini_request_log.py) | Verifies logical requests, numbered runs, retry authorization, interruptions, and result binding. |
 | [`tests/test_gemini_routing.py`](tests/test_gemini_routing.py) | Verifies request-to-router binding, safe primary/fallback routing, failures, cooldowns, and returned attempt history. |
+| [`tests/test_youtube_credentials.py`](tests/test_youtube_credentials.py) | Verifies strict Gemini credential parsing, atomic protected installation, local validation, and secret-free command output. |
 
 ## Development ledger
 
