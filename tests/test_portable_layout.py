@@ -19,6 +19,10 @@ class PortableLayoutTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def write_executable(self, path, content):
+        path.write_text(content, encoding="utf-8")
+        path.chmod(0o755)
+
     def make_install(self):
         install = self.root / INSTALL_NAME
         for relative in (
@@ -115,6 +119,94 @@ class PortableLayoutTests(unittest.TestCase):
         self.assertNotIn("${INSTALL_NAME}-invalid-", source)
         self.assertIn('"$portable/state"', source)
         self.assertIn('"$portable/work"', source)
+
+    def test_build_uses_one_temporary_npm_cache_and_cleans_it(self):
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        install_parent = self.root / "install-parent"
+        install_parent.mkdir()
+        calls = self.root / "npm-calls.txt"
+        inherited_cache = self.root / "unusable-inherited-cache"
+        inherited_cache.write_text("not a directory\n", encoding="utf-8")
+        inherited_cache.chmod(0o000)
+
+        self.write_executable(fake_bin / "git", "#!/bin/sh\nexit 0\n")
+        self.write_executable(
+            fake_bin / "node",
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = --version ]; then\n"
+            "  echo v24.14.0\n"
+            "else\n"
+            "  echo '{\"tools\":[{\"name\":\"research-video\"}]}'\n"
+            "fi\n",
+        )
+        self.write_executable(
+            fake_bin / "npm",
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "[ \"${NPM_CONFIG_CACHE:-}\" != \"$INHERITED_NPM_CACHE\" ] || exit 91\n"
+            "case \"${NPM_CONFIG_CACHE:-}\" in\n"
+            "  \"$FAKE_INSTALL_PARENT\"/.youtube-mcp-build.*/npm-cache) ;;\n"
+            "  *) exit 92 ;;\n"
+            "esac\n"
+            "[ -d \"$NPM_CONFIG_CACHE\" ] || exit 93\n"
+            ": >\"$NPM_CONFIG_CACHE/fake-npm-write\"\n"
+            "if [ -s \"$FAKE_NPM_CALLS\" ]; then\n"
+            "  IFS= read -r first_cache <\"$FAKE_NPM_CALLS\"\n"
+            "  [ \"$first_cache\" = \"$NPM_CONFIG_CACHE\" ] || exit 94\n"
+            "fi\n"
+            "printf '%s\\n' \"$NPM_CONFIG_CACHE\" >>\"$FAKE_NPM_CALLS\"\n"
+            "case \"$*\" in\n"
+            "  'ci --no-audit --no-fund') ;;\n"
+            "  'run build') mkdir -p dist; : >dist/stdio-server.js ;;\n"
+            "  *) exit 95 ;;\n"
+            "esac\n",
+        )
+
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+                "CODEX_PRIMARY_RUNTIME_NODE": str(fake_bin / "node"),
+                "NPM_CONFIG_CACHE": str(inherited_cache),
+                "INHERITED_NPM_CACHE": str(inherited_cache),
+                "FAKE_INSTALL_PARENT": str(install_parent),
+                "FAKE_NPM_CALLS": str(calls),
+            }
+        )
+        result = subprocess.run(
+            [
+                "sh",
+                str(INSTALLER),
+                "--search-root",
+                str(self.root / "empty-search-root"),
+                "--install-parent",
+                str(install_parent),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cache_paths = calls.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(cache_paths), 2)
+        self.assertEqual(cache_paths[0], cache_paths[1])
+        cache_path = Path(cache_paths[0])
+        self.assertEqual(cache_path.name, "npm-cache")
+        self.assertEqual(cache_path.parent.parent, install_parent)
+        self.assertFalse(cache_path.exists())
+        self.assertEqual(list(install_parent.glob(".youtube-mcp-build.*")), [])
+        self.assertEqual(
+            {path.name for path in (install_parent / INSTALL_NAME).iterdir()},
+            {"app", "runtime", "state", "work", "README.md", "VERSION"},
+        )
+        self.assertFalse((install_parent / INSTALL_NAME / "npm-cache").exists())
+        self.assertEqual(
+            inherited_cache.read_text(encoding="utf-8"),
+            "not a directory\n",
+        )
 
 
 if __name__ == "__main__":

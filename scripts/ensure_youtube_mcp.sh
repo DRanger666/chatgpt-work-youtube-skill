@@ -105,13 +105,14 @@ done
 
 build_root=$(mktemp -d "$install_parent/.youtube-mcp-build.XXXXXX")
 portable=$build_root/$INSTALL_NAME
+npm_cache=$build_root/npm-cache
 cleanup() {
   rm -rf -- "$build_root"
 }
 trap cleanup EXIT HUP INT TERM
 
 mkdir -p "$portable/app" "$portable/runtime/bin" "$portable/state" \
-  "$portable/work"
+  "$portable/work" "$npm_cache"
 
 echo "Fetching pinned YouTube MCP source..." >&2
 git -C "$portable/app" init -q
@@ -149,6 +150,7 @@ chmod 755 "$portable/runtime/bin/node"
 echo "Installing locked dependencies and compiling..." >&2
 (
   cd "$portable/app"
+  export NPM_CONFIG_CACHE=$npm_cache
   PATH="$portable/runtime/bin:$PATH" npm ci --no-audit --no-fund
   PATH="$portable/runtime/bin:$PATH" npm run build
 )
