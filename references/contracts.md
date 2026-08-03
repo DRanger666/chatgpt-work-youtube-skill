@@ -107,6 +107,15 @@ tested prompt, JSON response schema, and 8192-token allowance. Transcript
 timestamps use `MM:SS.mmm` video-start offsets, where minutes have at least two
 digits and can exceed 99.
 
+For reusable `gemini-free-form-text` video material, pass
+`--max-output-tokens 8192` and require Gemini `finishReason` `STOP` before
+indexing. In the representative live test, the ordinary 2048-token allowance
+spent 1964 tokens on model reasoning and returned only 80 answer tokens with
+`MAX_TOKENS`; the otherwise identical 8192-token request finished normally.
+A truncated response remains saved and linked to its successful run but stays
+out of the material index. Continue with a changed smaller-range request, not
+an identical repetition.
+
 Send only a request that has already been recorded as the highest pending run:
 
 ```sh

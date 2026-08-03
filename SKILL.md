@@ -143,8 +143,13 @@ python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
 ```sh
 python3 "$skill_dir/scripts/build_gemini_chunk_request.py" \
   --video-url VIDEO_URL --start-seconds START --end-seconds END \
-  --prompt PROMPT --output REQUEST_JSON
+  --prompt PROMPT --max-output-tokens 8192 --output REQUEST_JSON
 ```
+
+Use the `8192` allowance for reusable free-form video material. After the call,
+inspect Gemini's `finishReason`; save a `MAX_TOKENS` response as run evidence
+but do not admit it to the material index. Build a changed request with a
+smaller time range rather than repeating it unchanged.
 
 Transcript mode requests only audible linguistic content in the original
 language and native script. Its timestamps, every millisecond range, and every
@@ -209,7 +214,8 @@ python3 "$skill_dir/scripts/gemini_request.py" \
    response; run `finish-run` with the saved response and its Drive file ID;
    and upload the updated request log. Add checked or reviewed material to the
    index afterward, then upload the index. Never index malformed transcript
-   output or unreviewed free-form output.
+   output, unreviewed free-form output, or free-form output whose
+   `finishReason` is not `STOP`.
 8. For successful one-time content, run `finish-run` with the router result
    and exact local response file. It records that response storage was
    deliberately omitted. Do not upload the response text.
