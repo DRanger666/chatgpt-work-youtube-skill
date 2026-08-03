@@ -21,6 +21,101 @@ feature, investigation, design, and refinement work.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
 
+### LEDGER-003 — Characterize the account skill-save fallback
+
+- Status: Hypothesis
+- Type: Investigation
+- Layer: ChatGPT skill platform
+- Evidence: Trial `A1` received a validation-layer response on its first save,
+  then succeeded after checking reconciliation and using a metadata-first,
+  two-stage update.
+- Next check:
+  - [ ] Capture the exact observable response in another fresh account.
+  - [ ] Determine whether the first request was rejected, asynchronously
+        reconciled, or packaged incorrectly.
+  - [ ] Encode conditional platform-installation guidance only after the
+        behavior is sufficiently characterized.
+- Related document:
+  [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
+
+### LEDGER-011 — Remove cache-v2 Drive data after representative v3 validation
+
+- Status: Planned
+- Type: Maintenance
+- Layer: Google Drive saved data
+- Evidence: Cache v3 is deliberately isolated from cache v2, and the older
+  files have little current value, but deleting them during implementation
+  would mix cleanup with validation of the replacement.
+- Next check:
+  - [ ] Run separately authorized representative live v3 trials.
+  - [ ] Confirm that the new saved responses, material indexes, and request
+        logs can be found and reused from a fresh Work session.
+  - [ ] Inventory the exact cache-v2 Drive files without modifying them.
+  - [ ] After the user approves that inventory, delete only those v2 files and
+        verify that `YouTubeVideoWork` remains unchanged.
+- Related document:
+  [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
+
+### LEDGER-018 — Reconcile requested and returned transcript end times
+
+- Status: Planned from live evidence
+- Type: Transcript validation and range-planning correction
+- Layer: Gemini transcript checking, saved material, and missing-range planning
+- Evidence:
+  - During the first representative live test, YouTube exposed
+    `I9tX-lFUTrw` with an integer duration of `198` seconds. A Gemini transcript
+    request for `[0, 198000)` returned a coherent complete transcript whose
+    declared end and completed-through time were `197000` milliseconds.
+  - A changed request for `[0, 197000)` then returned a coherent complete
+    transcript ending at `196892` milliseconds. The current checker classified
+    both entire responses as `clip_mismatch` and retained none of their proven
+    prefix as reusable material.
+  - The YouTube page's stream metadata independently reported approximate
+    durations of `197999`, `198021`, and `198066` milliseconds. The second
+    Gemini response therefore stopped roughly `1.1` seconds before available
+    media ended; this is not merely integer-duration rounding.
+  - Treating either difference as an ignorable tolerance would risk hiding
+    speech, music, noise, or other content at the video boundary. Repeatedly
+    subtracting a rounded second also does not establish the actual source end.
+- Required correction:
+  - Do not require exact equality between a requested end and a shorter
+    returned end as a condition for preserving all earlier valid transcript
+    coverage. Validate the returned prefix mechanically and keep its exact
+    completed-through time.
+  - Keep the interval between that time and the requested end explicit. Do not
+    round it away, silently call it covered, or discard the already validated
+    prefix.
+  - Establish a trustworthy way to obtain or reconcile precise source duration
+    before declaring that an apparent tail lies beyond the video rather than
+    remaining unprocessed. An integer YouTube duration and Gemini's own claim
+    are not, individually, sufficient proof.
+  - Distinguish an end-of-source discrepancy from an early stop inside an
+    ordinary mid-video clip. Later-than-requested timestamps, invalid segment
+    ordering, inconsistent completion flags, and content outside the returned
+    bounds remain failures.
+  - Prevent a decrement-and-retry loop. A changed request may be made only when
+    the remaining range is real and the new request can obtain new evidence.
+- Implementation acceptance:
+  - [ ] Amend the transcript checker and range planner only after the precise
+        source-duration boundary and its evidence are defined in the governing
+        transcript contract.
+  - [ ] Add secret-free offline cases for exact bounds, a shorter valid prefix,
+        an actual source end between whole seconds, a genuine early stop in a
+        mid-video clip, a later-than-requested end, inconsistent completion
+        fields, and an unresolved final interval containing possible audio.
+  - [ ] Prove that a valid prefix remains searchable while only the unresolved
+        suffix is offered for further work.
+  - [ ] Prove that neither whole-second rounding nor an arbitrary tolerance can
+        mark an unexamined suffix as covered.
+  - [ ] Use the two retained live responses only as observed evidence. Do not
+        repeat either Gemini request during implementation or mutate its Drive
+        record as part of offline validation.
+- Completion rule: Close only after the corrected checker preserves proven
+  coverage without making a false full-video claim, and a representative live
+  acceptance run distinguishes true source end from an unprocessed tail.
+
+## Completed portable bootstrap work
+
 ### LEDGER-002 — Harden the npm cache path in fresh Work VMs
 
 - Status: Completed
@@ -97,41 +192,6 @@ feature, investigation, design, and refinement work.
   portable layout, MCP handshake, and persistent credential bootstrap.
 - Related document:
   [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
-
-### LEDGER-003 — Characterize the account skill-save fallback
-
-- Status: Hypothesis
-- Type: Investigation
-- Layer: ChatGPT skill platform
-- Evidence: Trial `A1` received a validation-layer response on its first save,
-  then succeeded after checking reconciliation and using a metadata-first,
-  two-stage update.
-- Next check:
-  - [ ] Capture the exact observable response in another fresh account.
-  - [ ] Determine whether the first request was rejected, asynchronously
-        reconciled, or packaged incorrectly.
-  - [ ] Encode conditional platform-installation guidance only after the
-        behavior is sufficiently characterized.
-- Related document:
-  [`investigations/chatgpt-work-installation-friction.md`](investigations/chatgpt-work-installation-friction.md)
-
-### LEDGER-011 — Remove cache-v2 Drive data after representative v3 validation
-
-- Status: Planned
-- Type: Maintenance
-- Layer: Google Drive saved data
-- Evidence: Cache v3 is deliberately isolated from cache v2, and the older
-  files have little current value, but deleting them during implementation
-  would mix cleanup with validation of the replacement.
-- Next check:
-  - [ ] Run separately authorized representative live v3 trials.
-  - [ ] Confirm that the new saved responses, material indexes, and request
-        logs can be found and reused from a fresh Work session.
-  - [ ] Inventory the exact cache-v2 Drive files without modifying them.
-  - [ ] After the user approves that inventory, delete only those v2 files and
-        verify that `YouTubeVideoWork` remains unchanged.
-- Related document:
-  [`design/gemini-response-storage-and-search.md`](design/gemini-response-storage-and-search.md)
 
 ### LEDGER-016 — Simplify the portable installation layout
 
@@ -389,64 +449,6 @@ feature, investigation, design, and refinement work.
   MCP installation; it does not claim that a Gemini key is accepted by the
   remote API. That live check remains part of the separately planned
   representative saved-work validation.
-
-### LEDGER-018 — Reconcile requested and returned transcript end times
-
-- Status: Planned from live evidence
-- Type: Transcript validation and range-planning correction
-- Layer: Gemini transcript checking, saved material, and missing-range planning
-- Evidence:
-  - During the first representative live test, YouTube exposed
-    `I9tX-lFUTrw` with an integer duration of `198` seconds. A Gemini transcript
-    request for `[0, 198000)` returned a coherent complete transcript whose
-    declared end and completed-through time were `197000` milliseconds.
-  - A changed request for `[0, 197000)` then returned a coherent complete
-    transcript ending at `196892` milliseconds. The current checker classified
-    both entire responses as `clip_mismatch` and retained none of their proven
-    prefix as reusable material.
-  - The YouTube page's stream metadata independently reported approximate
-    durations of `197999`, `198021`, and `198066` milliseconds. The second
-    Gemini response therefore stopped roughly `1.1` seconds before available
-    media ended; this is not merely integer-duration rounding.
-  - Treating either difference as an ignorable tolerance would risk hiding
-    speech, music, noise, or other content at the video boundary. Repeatedly
-    subtracting a rounded second also does not establish the actual source end.
-- Required correction:
-  - Do not require exact equality between a requested end and a shorter
-    returned end as a condition for preserving all earlier valid transcript
-    coverage. Validate the returned prefix mechanically and keep its exact
-    completed-through time.
-  - Keep the interval between that time and the requested end explicit. Do not
-    round it away, silently call it covered, or discard the already validated
-    prefix.
-  - Establish a trustworthy way to obtain or reconcile precise source duration
-    before declaring that an apparent tail lies beyond the video rather than
-    remaining unprocessed. An integer YouTube duration and Gemini's own claim
-    are not, individually, sufficient proof.
-  - Distinguish an end-of-source discrepancy from an early stop inside an
-    ordinary mid-video clip. Later-than-requested timestamps, invalid segment
-    ordering, inconsistent completion flags, and content outside the returned
-    bounds remain failures.
-  - Prevent a decrement-and-retry loop. A changed request may be made only when
-    the remaining range is real and the new request can obtain new evidence.
-- Implementation acceptance:
-  - [ ] Amend the transcript checker and range planner only after the precise
-        source-duration boundary and its evidence are defined in the governing
-        transcript contract.
-  - [ ] Add secret-free offline cases for exact bounds, a shorter valid prefix,
-        an actual source end between whole seconds, a genuine early stop in a
-        mid-video clip, a later-than-requested end, inconsistent completion
-        fields, and an unresolved final interval containing possible audio.
-  - [ ] Prove that a valid prefix remains searchable while only the unresolved
-        suffix is offered for further work.
-  - [ ] Prove that neither whole-second rounding nor an arbitrary tolerance can
-        mark an unexamined suffix as covered.
-  - [ ] Use the two retained live responses only as observed evidence. Do not
-        repeat either Gemini request during implementation or mutate its Drive
-        record as part of offline validation.
-- Completion rule: Close only after the corrected checker preserves proven
-  coverage without making a false full-video claim, and a representative live
-  acceptance run distinguishes true source end from an unprocessed tail.
 
 ## Completed refinements
 
