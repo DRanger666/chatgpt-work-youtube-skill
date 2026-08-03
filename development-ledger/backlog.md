@@ -373,6 +373,60 @@ feature, investigation, design, and refinement work.
   remote API. That live check remains part of the separately planned
   representative saved-work validation.
 
+### LEDGER-018 — Reconcile requested and returned transcript end times
+
+- Status: Planned from live evidence
+- Type: Transcript validation and range-planning correction
+- Layer: Gemini transcript checking, saved material, and missing-range planning
+- Evidence:
+  - During the first representative live test, YouTube exposed
+    `I9tX-lFUTrw` with an integer duration of `198` seconds. A Gemini transcript
+    request for `[0, 198000)` returned a coherent complete transcript whose
+    declared end and completed-through time were `197000` milliseconds.
+  - A changed request for `[0, 197000)` then returned a coherent complete
+    transcript ending at `196892` milliseconds. The current checker classified
+    both entire responses as `clip_mismatch` and retained none of their proven
+    prefix as reusable material.
+  - Treating either difference as an ignorable tolerance would risk hiding
+    speech, music, noise, or other content at the video boundary. Repeatedly
+    subtracting a rounded second also does not establish the actual source end.
+- Required correction:
+  - Do not require exact equality between a requested end and a shorter
+    returned end as a condition for preserving all earlier valid transcript
+    coverage. Validate the returned prefix mechanically and keep its exact
+    completed-through time.
+  - Keep the interval between that time and the requested end explicit. Do not
+    round it away, silently call it covered, or discard the already validated
+    prefix.
+  - Establish a trustworthy way to obtain or reconcile precise source duration
+    before declaring that an apparent tail lies beyond the video rather than
+    remaining unprocessed. An integer YouTube duration and Gemini's own claim
+    are not, individually, sufficient proof.
+  - Distinguish an end-of-source discrepancy from an early stop inside an
+    ordinary mid-video clip. Later-than-requested timestamps, invalid segment
+    ordering, inconsistent completion flags, and content outside the returned
+    bounds remain failures.
+  - Prevent a decrement-and-retry loop. A changed request may be made only when
+    the remaining range is real and the new request can obtain new evidence.
+- Implementation acceptance:
+  - [ ] Amend the transcript checker and range planner only after the precise
+        source-duration boundary and its evidence are defined in the governing
+        transcript contract.
+  - [ ] Add secret-free offline cases for exact bounds, a shorter valid prefix,
+        an actual source end between whole seconds, a genuine early stop in a
+        mid-video clip, a later-than-requested end, inconsistent completion
+        fields, and an unresolved final interval containing possible audio.
+  - [ ] Prove that a valid prefix remains searchable while only the unresolved
+        suffix is offered for further work.
+  - [ ] Prove that neither whole-second rounding nor an arbitrary tolerance can
+        mark an unexamined suffix as covered.
+  - [ ] Use the two retained live responses only as observed evidence. Do not
+        repeat either Gemini request during implementation or mutate its Drive
+        record as part of offline validation.
+- Completion rule: Close only after the corrected checker preserves proven
+  coverage without making a false full-video claim, and a representative live
+  acceptance run distinguishes true source end from an unprocessed tail.
+
 ## Completed refinements
 
 ### LEDGER-014 — Remove redundant timestamp-coordinate metadata
