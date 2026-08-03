@@ -23,7 +23,7 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-002 — Harden the npm cache path in fresh Work VMs
 
-- Status: Worker implemented; acceptance pending
+- Status: Completed
 - Type: Work VM hardening
 - Layer: Work VM/runtime
 - Evidence:
@@ -78,15 +78,20 @@ feature, investigation, design, and refinement work.
   - No live installation, Drive access, Gemini call, or installed-skill update
     was performed. The combined LEDGER-002/016/017 acceptance remains open.
 - Main/user acceptance after implementation review and merge:
-  - [ ] Run the single combined LEDGER-002/016/017 clean-install sequence.
-  - [ ] Invoke the final installer while the caller's npm cache still resolves
+  - [x] Run the single combined LEDGER-002/016/017 clean-install sequence.
+  - [x] Invoke the final installer while the caller's npm cache still resolves
         to the known unusable `/root/.npm` path; confirm that the installer
         builds successfully without creating or modifying that path.
-  - [ ] Confirm that the temporary npm cache is removed and that the final
+  - [x] Confirm that the temporary npm cache is removed and that the final
         portable tree contains only the directories and files defined by
         LEDGER-017.
-  - [ ] Complete the MCP initialization and tool-enumeration handshake, then
+  - [x] Complete the MCP initialization and tool-enumeration handshake, then
         complete the persistent-credential checks in LEDGER-017.
+- Main/user acceptance outcome:
+  - On 2026-08-03, a real clean build succeeded with inherited
+    `NPM_CONFIG_CACHE=/root/.npm`; that path remained absent, the temporary
+    build root was removed, the exact final tree was produced, and all 14 MCP
+    tools were enumerated through the compiled stdio server.
 - Completion rule: Keep LEDGER-002, LEDGER-016, and LEDGER-017 open until the
   same clean-install acceptance run proves the isolated npm build, final
   portable layout, MCP handshake, and persistent credential bootstrap.
@@ -130,7 +135,7 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-016 — Simplify the portable installation layout
 
-- Status: Worker implemented; acceptance pending
+- Status: Completed
 - Type: Refinement
 - Layer: Work VM/local portable installation
 - Evidence:
@@ -229,19 +234,25 @@ feature, investigation, design, and refinement work.
   - No MCP installation, Gemini request, Drive operation, installed-skill
     update, or change to `/workspace/youtube-mcp-portable` was performed.
 - Main/user acceptance after implementation review and merge:
-  - [ ] Run these checks only after LEDGER-002 and LEDGER-017 are implemented.
+  - [x] Run these checks only after LEDGER-002 and LEDGER-017 are implemented.
         Use LEDGER-017's final credential location and portable tree; do not
         accept the interim `config/` directory as part of the maintained
         installation.
-  - [ ] Delete the existing `/workspace/youtube-mcp-portable` installation.
-  - [ ] Run the merged installer to build a fresh portable installation from
+  - [x] Begin with no `/workspace/youtube-mcp-portable` installation. The
+        acceptance VM already satisfied this clean starting condition, so no
+        deletion was required.
+  - [x] Run the merged installer to build a fresh portable installation from
         the pinned source and dependencies.
-  - [ ] Confirm the exact maintained tree and absence of the removed
+  - [x] Confirm the exact maintained tree and absence of the removed
         installation-root `bin/`, `materials/`, and `workspace/` directories.
-  - [ ] Start the newly installed MCP locally and complete initialization plus
+  - [x] Start the newly installed MCP locally and complete initialization plus
         tool enumeration. Do not access a video, Gemini, Drive, or a credential.
-  - [ ] Confirm that a complex MCP argument file can be read from `work/` and
+  - [x] Confirm that a complex MCP argument file can be read from `work/` and
         that the configured future router-state path is under `state/`.
+- Main/user acceptance outcome:
+  - The clean installation contains only `app/`, `runtime/`, `state/`, `work/`,
+    `README.md`, and `VERSION`. MCP argument files were read from `work/`, and
+    live routing created only `state/gemini-keypool-state.json` under `state/`.
 - Completion rule: The worker must leave this item open after implementation.
   Close LEDGER-002, LEDGER-016, and LEDGER-017 only after their combined
   main/user acceptance checks pass, the installed MCP handshake succeeds
@@ -252,7 +263,7 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-017 — Persist Gemini credentials independently of the MCP installation
 
-- Status: Worker implemented; acceptance pending
+- Status: Completed
 - Type: Credential bootstrap correction
 - Layer: Google Drive connector and mounted Work storage
 - Evidence:
@@ -356,16 +367,22 @@ feature, investigation, design, and refinement work.
   - No Drive access, Gemini call, live credential change, MCP replacement, or
     installed-skill update was performed.
 - Main/user acceptance after implementation review and merge:
-  - [ ] Remove the existing portable installation and rebuild the final
+  - [x] Remove the existing portable installation and rebuild the final
         LEDGER-002/016/017 tree from the pinned MCP source.
-  - [ ] Complete the MCP initialization and tool-enumeration handshake without
+  - [x] Complete the MCP initialization and tool-enumeration handshake without
         root launcher scripts or a portable `config/` directory.
-  - [ ] If the protected local credential is absent, retrieve the canonical
+  - [x] If the protected local credential is absent, retrieve the canonical
         Drive file once as readable text and install it through standard input.
         Verify the fixed path and permissions without displaying either key.
-  - [ ] Repeat the credential check and MCP installer invocation using only the
+  - [x] Repeat the credential check and MCP installer invocation using only the
         existing `/workspace` files; confirm that neither operation needs
         another Drive read or changes the credential file.
+- Main/user acceptance outcome:
+  - The absent credential was fetched once by stable Drive ID, passed only on
+    standard input to the helper, and installed under `0700` directories as a
+    `0600` file without secret-bearing output. A later check and installer
+    invocation reused it unchanged, and Gemini accepted the primary credential
+    during the representative live test.
 - Completion rule: Keep LEDGER-002, LEDGER-016, and LEDGER-017 open until the
   combined acceptance checks pass. Completion establishes an isolated npm
   build, persistent Drive-to-VM credential bootstrap, and a clean reproducible
