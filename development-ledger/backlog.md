@@ -170,6 +170,9 @@ feature, investigation, design, and refinement work.
   - No MCP installation, Gemini request, Drive operation, installed-skill
     update, or change to `/workspace/youtube-mcp-portable` was performed.
 - Main/user acceptance after implementation review and merge:
+  - [ ] Run these checks only after LEDGER-017 is implemented. Use its final
+        credential location and portable tree; do not accept the interim
+        `config/` directory as part of the maintained installation.
   - [ ] Delete the existing `/workspace/youtube-mcp-portable` installation.
   - [ ] Run the merged installer to build a fresh portable installation from
         the pinned source and dependencies.
@@ -185,6 +188,115 @@ feature, investigation, design, and refinement work.
   procedure, script, or test refers to the removed installation-root `bin/`,
   `materials/`, or former `workspace/` directory. The required Node executable
   remains `runtime/bin/node`.
+
+### LEDGER-017 — Persist Gemini credentials independently of the MCP installation
+
+- Status: Planned
+- Type: Credential bootstrap correction
+- Layer: Google Drive connector and mounted Work storage
+- Evidence:
+  - The current procedure writes `youtube-workbench-secrets.env` inside
+    `/workspace/youtube-mcp-portable/config/`. That couples a persistent
+    credential to a reproducible installation which is deliberately replaced
+    as one unit.
+  - The instruction to "materialize" the Drive file does not tell a fresh Work
+    session how to move the credential from the connector result into the VM.
+    This ambiguity has already caused Work sessions to hesitate or pursue
+    inconsistent paths.
+  - The maintained `work-vm-terminal-git` skill demonstrates the useful
+    boundary: read the canonical Drive file as ordinary text, pass credential
+    data through standard input to a deterministic local helper, and keep the
+    protected local copy under `/workspace/.chatgpt-work-credentials/`.
+    Git-specific configuration and credential-helper behavior do not apply to
+    Gemini.
+- Decision:
+  - Store the local Gemini credential only at
+    `/workspace/.chatgpt-work-credentials/youtube/youtube-workbench-secrets.env`.
+    Set the directory mode to `0700` and the file mode to `0600`.
+  - Keep credentials outside `/workspace/youtube-mcp-portable`. Remove
+    `config/` from the portable installer, verifier, generated README, active
+    contracts, and layout tests. The final maintained portable tree is:
+
+    ```text
+    /workspace/youtube-mcp-portable/
+      app/
+      runtime/
+      state/
+      work/
+      README.md
+      VERSION
+    ```
+
+  - Check and reuse the protected local file first. Read Drive only when that
+    file is absent, empty, or invalid. An unrelated network, quota, request, or
+    repository error is not a reason to read Drive again.
+  - Use the existing canonical Drive location: folder `WorkModeCredentials`
+    with ID `1q58TvI519TDgTePQG1h2Rof5EdA2jDJk`, and file
+    `youtube-workbench-secrets.env` with ID
+    `1rvfVswFWzIoqMOKsJttZgTsRkpbiKxNx`. Prefer the stable file ID; if it is
+    unavailable, require one exact filename match inside the verified folder.
+  - Fetch the Drive file as ordinary readable text. The connected Drive tool
+    and the active Work session are authorized to read that plaintext. They
+    must not reproduce it in commentary, final answers, terminal command
+    arguments, or command output.
+  - Pass the fetched text on standard input to one deterministic credential
+    helper. Never shell-source the Drive response. The helper must accept only
+    `GEMINI_API_KEY` and `GEMINI_API_KEY_FALLBACK`, require each exactly once
+    with a non-empty distinct value, reject every other assignment or malformed
+    line, and write a normalized two-assignment file atomically without
+    printing either value.
+  - Make the Gemini router read the normalized local file directly after it
+    verifies the pending request binding. Do not require an agent to export or
+    shell-source credentials, and do not accept credential values on command
+    lines.
+  - If Gemini explicitly rejects a configured credential, preserve the router
+    result and stop. Automatic credential replacement and router-state reset
+    are outside this initial bootstrap correction; do not mistake other
+    failures for credential rejection.
+- Worker implementation:
+  - [ ] Add one narrowly scoped credential helper with `install` and `check`
+        operations. `install` reads the complete Drive text from standard input
+        and writes only the fixed local path; `check` validates the fixed local
+        file and its permissions without printing credential data.
+  - [ ] Change `scripts/gemini_request.py` to load the two buckets from the
+        validated fixed local file instead of process environment variables.
+        Preserve the rule that request-file and pending-run verification occurs
+        before any credential is read.
+  - [ ] Remove `config/` from `scripts/ensure_youtube_mcp.sh` and every active
+        description or test of the portable layout. Do not add migration,
+        backup, compatibility, or credential-transfer behavior to the MCP
+        installer.
+  - [ ] Replace the vague credential paragraph in `SKILL.md` with the exact
+        local-first check, Drive text retrieval, standard-input install, and
+        local-file router procedure. Update `references/contracts.md`, relevant
+        design text, `.gitignore`, tests, and `REPOSITORY_MAP.md` without
+        duplicating the runtime procedure.
+  - [ ] Add offline tests using fake credentials and temporary paths for exact
+        parsing, rejection of missing/duplicate/unexpected/identical values,
+        atomic replacement, `0700`/`0600` permissions, secret-free output,
+        local-file bucket loading, and request verification before credential
+        access. Ensure the final portable-layout tests reject `config/`.
+  - [ ] Run the complete offline suite, Python/shell/Node syntax checks,
+        skill-package validation, active-path scans, credential-pattern scans,
+        and diff-integrity checks. Do not access Drive, call Gemini, change the
+        live credential directory, replace the installed MCP, or update the
+        installed skill.
+- Main/user acceptance after implementation review and merge:
+  - [ ] Remove the existing portable installation and rebuild the final
+        LEDGER-016/017 tree from the pinned MCP source.
+  - [ ] Complete the MCP initialization and tool-enumeration handshake without
+        root launcher scripts or a portable `config/` directory.
+  - [ ] If the protected local credential is absent, retrieve the canonical
+        Drive file once as readable text and install it through standard input.
+        Verify the fixed path and permissions without displaying either key.
+  - [ ] Repeat the credential check and MCP installer invocation using only the
+        existing `/workspace` files; confirm that neither operation needs
+        another Drive read or changes the credential file.
+- Completion rule: Keep LEDGER-016 and LEDGER-017 open until the combined
+  acceptance checks pass. Completion establishes persistent Drive-to-VM
+  credential bootstrap and a clean reproducible MCP installation; it does not
+  claim that a Gemini key is accepted by the remote API. That live check remains
+  part of the separately planned representative saved-work validation.
 
 ## Completed refinements
 
