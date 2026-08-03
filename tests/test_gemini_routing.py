@@ -16,6 +16,7 @@ if str(SCRIPTS) not in sys.path:
 
 import gemini_request
 import gemini_request_log
+import youtube_credentials
 import youtube_work_common as common
 
 
@@ -92,6 +93,19 @@ class GeminiRouterTests(unittest.TestCase):
         )
         self.log_path = self.directory / "request-log.json"
         common.write_json(self.log_path, self.log)
+        self.credential_path = (
+            self.directory
+            / ".chatgpt-work-credentials"
+            / "youtube"
+            / "youtube-workbench-secrets.env"
+        )
+        self.credential_path_patch = mock.patch.object(
+            youtube_credentials,
+            "CREDENTIAL_PATH",
+            self.credential_path,
+        )
+        self.credential_path_patch.start()
+        self.addCleanup(self.credential_path_patch.stop)
         self.args = SimpleNamespace(
             request=str(self.request_path),
             response=str(self.directory / "response.json"),
@@ -118,12 +132,15 @@ class GeminiRouterTests(unittest.TestCase):
 
     def run_router(self, responses, primary="primary-secret", fallback="fallback-secret"):
         transport = FakeTransport(responses)
-        environment = {"GEMINI_API_KEY": primary}
-        if fallback is not None:
-            environment["GEMINI_API_KEY_FALLBACK"] = fallback
-        with mock.patch.dict(os.environ, environment, clear=True), mock.patch.object(
-            gemini_request, "send_request", transport
-        ), mock.patch.object(gemini_request.random, "uniform", return_value=0.0):
+        youtube_credentials.install_credentials(
+            f"GEMINI_API_KEY={primary}\n"
+            f"GEMINI_API_KEY_FALLBACK={fallback}\n"
+        )
+        with mock.patch.object(gemini_request, "send_request", transport), mock.patch.object(
+            gemini_request.random,
+            "uniform",
+            return_value=0.0,
+        ):
             exit_code = gemini_request.run(self.args)
         result = common.load_json(Path(self.args.router_result))
         return exit_code, result, transport
@@ -231,38 +248,58 @@ class GeminiRouterTests(unittest.TestCase):
         self.assertEqual(transport.calls[0][1], "fallback-secret")
         self.assertEqual(result["attempts"][0]["bucket"], "fallback")
 
-    def test_duplicate_credential_does_not_create_a_second_bucket(self):
-        exit_code, result, transport = self.run_router(
-            [response(429, "RESOURCE_EXHAUSTED")],
-            primary="same-secret",
-            fallback="same-secret",
+    def test_identical_local_credentials_stop_before_network(self):
+        self.credential_path.parent.mkdir(parents=True, mode=0o700)
+        self.credential_path.write_text(
+            "GEMINI_API_KEY=same-secret\n"
+            "GEMINI_API_KEY_FALLBACK=same-secret\n",
+            encoding="utf-8",
         )
-        self.assertEqual(exit_code, 3)
-        self.assertEqual(len(transport.calls), 1)
-        self.assertEqual(len(result["attempts"]), 1)
+        self.credential_path.chmod(0o600)
+        transport = FakeTransport([])
+        with mock.patch.object(gemini_request, "send_request", transport):
+            with self.assertRaises(SystemExit):
+                gemini_request.run(self.args)
+        self.assertEqual(transport.calls, [])
 
     def test_request_binding_is_verified_before_credentials_or_network(self):
         changed = json.loads(self.request_path.read_text(encoding="utf-8"))
         changed["contents"][0]["parts"][1]["text"] = "Changed after logging"
         common.write_json(self.request_path, changed)
         transport = FakeTransport([])
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
-            gemini_request, "send_request", transport
-        ):
+        with mock.patch.object(
+            youtube_credentials,
+            "load_credentials",
+        ) as load_credentials, mock.patch.object(gemini_request, "send_request", transport):
             with self.assertRaises(gemini_request_log.RequestLogError):
                 gemini_request.run(self.args)
+        load_credentials.assert_not_called()
         self.assertEqual(transport.calls, [])
         self.assertFalse(Path(self.args.router_result).exists())
 
     def test_endpoint_model_mismatch_stops_before_network(self):
         self.args.model = "gemini-other"
         transport = FakeTransport([])
-        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "secret"}, clear=True), mock.patch.object(
-            gemini_request, "send_request", transport
-        ):
+        with mock.patch.object(
+            youtube_credentials,
+            "load_credentials",
+        ) as load_credentials, mock.patch.object(gemini_request, "send_request", transport):
             with self.assertRaises(gemini_request_log.RequestLogError):
                 gemini_request.run(self.args)
+        load_credentials.assert_not_called()
         self.assertEqual(transport.calls, [])
+
+    def test_router_uses_local_file_instead_of_environment_credentials(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GEMINI_API_KEY": "environment-primary",
+                "GEMINI_API_KEY_FALLBACK": "environment-fallback",
+            },
+            clear=True,
+        ):
+            _, _, transport = self.run_router([response(200)])
+        self.assertEqual(transport.calls[0][1], "primary-secret")
 
     def test_saved_state_and_router_result_contain_no_secret_material(self):
         _, result, _ = self.run_router([response(200)])
@@ -285,9 +322,11 @@ class GeminiRouterTests(unittest.TestCase):
         }
         common.write_json(Path(self.args.state), state)
         transport = FakeTransport([])
-        with mock.patch.dict(
-            os.environ, {"GEMINI_API_KEY": "secret"}, clear=True
-        ), mock.patch.object(gemini_request, "send_request", transport):
+        youtube_credentials.install_credentials(
+            "GEMINI_API_KEY=primary-secret\n"
+            "GEMINI_API_KEY_FALLBACK=fallback-secret\n"
+        )
+        with mock.patch.object(gemini_request, "send_request", transport):
             with self.assertRaises(SystemExit):
                 gemini_request.run(self.args)
         self.assertEqual(transport.calls, [])

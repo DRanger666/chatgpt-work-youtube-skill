@@ -51,7 +51,7 @@ one.
 | [`scripts/build_gemini_chunk_request.py`](scripts/build_gemini_chunk_request.py) | Builds one timestamp-clipped Gemini request, including structured transcript mode. |
 | [`scripts/saved_gemini_responses.py`](scripts/saved_gemini_responses.py) | Saves reusable Gemini responses, maintains and searches per-video material indexes, verifies selected files, finds missing time ranges, and splits those ranges into deterministic long-video chunks. |
 | [`scripts/gemini_request_log.py`](scripts/gemini_request_log.py) | Maintains per-video logical requests and append-only authorized runs, including retry, interruption, attempt, and result evidence. |
-| [`scripts/gemini_request.py`](scripts/gemini_request.py) | Verifies the highest pending run and routes one request through the primary/fallback Gemini credential pool. |
+| [`scripts/gemini_request.py`](scripts/gemini_request.py) | Verifies the highest pending run, loads the protected local credential file, and routes one request through the primary/fallback Gemini pool. |
 | [`scripts/youtube_credentials.py`](scripts/youtube_credentials.py) | Installs and validates the protected local Gemini credential file without exposing its values. |
 | [`scripts/youtube_work_common.py`](scripts/youtube_work_common.py) | Holds shared constants and validation for YouTube IDs, files, output types, hashes, timestamps, and time ranges. |
 
