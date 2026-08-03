@@ -23,7 +23,7 @@ feature, investigation, design, and refinement work.
 
 ### LEDGER-002 — Harden the npm cache path in fresh Work VMs
 
-- Status: Planned
+- Status: Worker implemented; acceptance pending
 - Type: Work VM hardening
 - Layer: Work VM/runtime
 - Evidence:
@@ -51,21 +51,32 @@ feature, investigation, design, and refinement work.
     this correction: the change removes a known external write assumption and
     has a bounded offline test plus a real clean-build acceptance check.
 - Worker implementation:
-  - [ ] Update only the npm build portion of
+  - [x] Update only the npm build portion of
         `scripts/ensure_youtube_mcp.sh`; do not alter the pinned MCP commit,
         Node version, maintained portable tree, credential handling, or MCP
         invocation path.
-  - [ ] Add a focused offline installer test with fake `git`, npm, and Node
+  - [x] Add a focused offline installer test with fake `git`, npm, and Node
         commands. Make the fake npm fail unless both npm invocations receive
         the same writable cache beneath the temporary build directory, and
         confirm that an inherited unusable npm-cache value cannot escape the
         installer override.
-  - [ ] Confirm that the temporary cache is absent after cleanup and never
+  - [x] Confirm that the temporary cache is absent after cleanup and never
         becomes an entry in `/workspace/youtube-mcp-portable`.
-  - [ ] Run the complete offline suite, shell and Python syntax checks,
+  - [x] Run the complete offline suite, shell and Python syntax checks,
         diff-integrity and active-reference scans, and credential-pattern
         checks. Do not replace the live MCP, access Drive, call Gemini, or
         update the installed skill.
+- Worker outcome:
+  - Commit `4f0f1e3` creates one npm cache inside the existing temporary build
+    directory and exports it for both npm commands. The controlled fake-command
+    test proves that the shared cache is writable, overrides an inherited
+    unusable value, is removed by cleanup, and never enters the final portable
+    tree.
+  - All 94 offline tests passed under four hash seeds, together with shell and
+    Python syntax, skill-package, diff-integrity, active-reference, and
+    credential-pattern checks.
+  - No live installation, Drive access, Gemini call, or installed-skill update
+    was performed. The combined LEDGER-002/016/017 acceptance remains open.
 - Main/user acceptance after implementation review and merge:
   - [ ] Run the single combined LEDGER-002/016/017 clean-install sequence.
   - [ ] Invoke the final installer while the caller's npm cache still resolves
