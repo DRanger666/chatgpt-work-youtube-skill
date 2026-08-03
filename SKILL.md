@@ -18,8 +18,8 @@ Google Drive or Gemini.
   prompts, saved responses, request logs, material indexes, `work/`, and
   `state/`.
 - Store saved Gemini work only in the private `YouTubeVideoWork` Drive folder
-  using the current file format. Do not search, import, migrate, or fall back to
-  cache-v2 files.
+  identified by the stable folder ID in the contract. Do not search, import,
+  migrate, or fall back to cache-v2 files.
 - Never edit a saved Gemini response. Use the material index only to find
   reusable responses; use the request log only to record Gemini requests and
   their known outcomes.
@@ -73,7 +73,7 @@ Use `scripts/saved_gemini_responses.py` and the exact Drive filenames and JSON
 fields defined in the contract.
 
 1. Run `locate --video VIDEO`, then look up the exact material-index filename
-   in `YouTubeVideoWork`.
+   in the stable `YouTubeVideoWork` folder.
 2. If the index is absent, enumerate that video's saved-response filenames.
    Rebuild the index when responses exist. Initialize an empty index only after
    confirming that none exist.

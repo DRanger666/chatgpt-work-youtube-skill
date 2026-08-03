@@ -73,9 +73,9 @@ and one non-empty `GEMINI_API_KEY_FALLBACK` assignment in that order. Their
 values must differ because the fallback belongs to a distinct project. The
 router reads this file directly; do not shell-source or export it.
 
-Saved Gemini work uses one private folder named `YouTubeVideoWork`. Locate it
-by exact name and require one unambiguous result. Once created, retain and
-verify its stable Drive ID. Its three filename forms are:
+Saved Gemini work uses one private folder named `YouTubeVideoWork` with Drive
+folder ID `16hbk_mI940j-eCHBP6maBZeLMHXiY41K`. Fetch it by that stable ID and
+verify its name before use. Its three filename forms are:
 
 ```text
 <videoId>--video-material-index.json
