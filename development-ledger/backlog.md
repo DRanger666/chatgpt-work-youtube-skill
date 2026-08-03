@@ -254,33 +254,46 @@ feature, investigation, design, and refinement work.
     are outside this initial bootstrap correction; do not mistake other
     failures for credential rejection.
 - Worker implementation:
-  - [ ] Add one narrowly scoped credential helper with `install` and `check`
+  - [x] Add one narrowly scoped credential helper with `install` and `check`
         operations. `install` reads the complete Drive text from standard input
         and writes only the fixed local path; `check` validates the fixed local
         file and its permissions without printing credential data.
-  - [ ] Change `scripts/gemini_request.py` to load the two buckets from the
+  - [x] Change `scripts/gemini_request.py` to load the two buckets from the
         validated fixed local file instead of process environment variables.
         Preserve the rule that request-file and pending-run verification occurs
         before any credential is read.
-  - [ ] Remove `config/` from `scripts/ensure_youtube_mcp.sh` and every active
+  - [x] Remove `config/` from `scripts/ensure_youtube_mcp.sh` and every active
         description or test of the portable layout. Do not add migration,
         backup, compatibility, or credential-transfer behavior to the MCP
         installer.
-  - [ ] Replace the vague credential paragraph in `SKILL.md` with the exact
+  - [x] Replace the vague credential paragraph in `SKILL.md` with the exact
         local-first check, Drive text retrieval, standard-input install, and
         local-file router procedure. Update `references/contracts.md`, relevant
         design text, `.gitignore`, tests, and `REPOSITORY_MAP.md` without
         duplicating the runtime procedure.
-  - [ ] Add offline tests using fake credentials and temporary paths for exact
+  - [x] Add offline tests using fake credentials and temporary paths for exact
         parsing, rejection of missing/duplicate/unexpected/identical values,
         atomic replacement, `0700`/`0600` permissions, secret-free output,
         local-file bucket loading, and request verification before credential
         access. Ensure the final portable-layout tests reject `config/`.
-  - [ ] Run the complete offline suite, Python/shell/Node syntax checks,
+  - [x] Run the complete offline suite, Python/shell/Node syntax checks,
         skill-package validation, active-path scans, credential-pattern scans,
         and diff-integrity checks. Do not access Drive, call Gemini, change the
         live credential directory, replace the installed MCP, or update the
         installed skill.
+- Worker outcome:
+  - Commit `d4e3099` added the fixed-path stdin credential helper, strict
+    two-assignment validation, atomic normalized writes, protected permissions,
+    and secret-free checks.
+  - Commit `7fffe93` made the router load exactly two distinct local-file keys
+    only after request and pending-run verification. Existing routing, retry,
+    cooldown, and attempt-history behavior remains unchanged.
+  - Commit `b4383d1` removed the credential directory from the portable MCP
+    tree and made that former root entry fail current-layout recognition.
+  - All 93 offline tests passed under four hash seeds, together with Python,
+    shell, Node, skill-package, active-path, credential-pattern, and diff checks.
+  - No Drive access, Gemini call, live credential change, MCP replacement, or
+    installed-skill update was performed.
 - Main/user acceptance after implementation review and merge:
   - [ ] Remove the existing portable installation and rebuild the final
         LEDGER-016/017 tree from the pinned MCP source.

@@ -25,7 +25,6 @@ Use this exact no-space layout:
 ```text
 /workspace/youtube-mcp-portable/
   app/
-  config/
   runtime/
   state/
   work/
@@ -59,10 +58,20 @@ Credential location:
 - File: `youtube-workbench-secrets.env`
 - File ID: `1rvfVswFWzIoqMOKsJttZgTsRkpbiKxNx`
 
-Retrieve credentials without displaying their bytes. Materialize them at
-`$install/config/youtube-workbench-secrets.env` with mode `0600`. The accepted
-variables are `GEMINI_API_KEY` and `GEMINI_API_KEY_FALLBACK`. The fallback must
-belong to a distinct project to provide distinct quota.
+Protected local location:
+
+- Directory: `/workspace/.chatgpt-work-credentials/youtube` with mode `0700`
+- File:
+  `/workspace/.chatgpt-work-credentials/youtube/youtube-workbench-secrets.env`
+  with mode `0600`
+- Helper: `scripts/youtube_credentials.py`
+- Operations: `check` and `install`; `install` accepts the complete Drive text
+  only on standard input
+
+The normalized file contains exactly one non-empty `GEMINI_API_KEY` assignment
+and one non-empty `GEMINI_API_KEY_FALLBACK` assignment in that order. Their
+values must differ because the fallback belongs to a distinct project. The
+router reads this file directly; do not shell-source or export it.
 
 Saved Gemini work uses one private folder named `YouTubeVideoWork`. Locate it
 by exact name and require one unambiguous result. Once created, retain and

@@ -109,9 +109,9 @@ as a personal skill for the account where the request is made. Because the
 repository is private, that account must have access through its connected
 GitHub account or a privately supplied PAT.
 
-No credentials belong in this repository. API keys and PATs should remain in
-private user-owned credential storage and be materialized locally only for the
-operation that needs them.
+No credentials belong in this repository or the replaceable MCP installation.
+API keys and PATs remain in private user-owned storage and protected mounted
+workspace credential files.
 
 After installation, ordinary requests such as these should invoke the skill:
 

@@ -160,15 +160,20 @@ Never repeat the identical request as truncation handling.
 
 ## Load Gemini credentials privately
 
-Use the connected Google Drive app and the exact credential location in the
-contract. Retrieve the file without displaying its bytes, materialize it at
-`$install/config/youtube-workbench-secrets.env` with mode `0600`, and load
-only `GEMINI_API_KEY` and `GEMINI_API_KEY_FALLBACK` into the router process
-environment.
+Run `python3 "$skill_dir/scripts/youtube_credentials.py" check` first. If it
+succeeds, reuse the protected local credential and do not read Drive.
 
-The router uses the primary project first and the fallback project only when
-the primary is unavailable. Duplicate values form one bucket. If Drive access
-is unavailable, stop and ask the user to connect it.
+Only when that check fails, fetch the canonical Drive file by the stable file
+ID in the contract as ordinary readable text. If the ID is unavailable,
+require one exact filename match inside the verified folder. Do not display or
+repeat the text. Pass the complete text on standard input to
+`python3 "$skill_dir/scripts/youtube_credentials.py" install`, then run
+`check` again. Never shell-source it or place credential values in a command
+argument. If Drive access is unavailable, stop and ask the user to connect it.
+
+The router reads the validated local file directly after request verification;
+do not export its assignments. It uses the primary project first and the
+fallback project only when the primary is unavailable.
 
 ## Run one logged Gemini request
 

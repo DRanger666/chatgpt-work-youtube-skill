@@ -117,13 +117,17 @@ separately before comparison.
 
 ## Interactive credential pool
 
-Use at most two aliases:
+Load two distinct values from the validated protected local credential file
+defined in the current contract. Do not read Gemini credentials from process
+environment variables. Use these aliases:
 
 - `primary`: `GEMINI_API_KEY`;
 - `fallback`: `GEMINI_API_KEY_FALLBACK` from a separately provisioned project.
 
-If both values are identical, collapse them to one bucket. Persist aliases and
-safe health state only; never store key values, fragments, or fingerprints.
+The runtime procedure checks the protected local file before any Drive access
+and installs canonical Drive text only through the credential helper's standard
+input. Persist aliases and safe health state only; never store key values,
+fragments, or fingerprints.
 
 Keep one Gemini request in flight. Route one run as follows:
 
