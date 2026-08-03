@@ -23,7 +23,6 @@ class PortableLayoutTests(unittest.TestCase):
         install = self.root / INSTALL_NAME
         for relative in (
             "app/dist",
-            "config",
             "runtime/bin",
             "state",
             "work",
@@ -80,7 +79,7 @@ class PortableLayoutTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), str(install))
         self.assertEqual(
             {path.name for path in install.iterdir()},
-            {"app", "config", "runtime", "state", "work", "README.md", "VERSION"},
+            {"app", "runtime", "state", "work", "README.md", "VERSION"},
         )
 
     def test_missing_state_requires_explicit_replacement(self):
@@ -100,6 +99,15 @@ class PortableLayoutTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Replacement required", result.stderr)
         self.assertTrue(unexpected.is_dir())
+
+    def test_portable_config_directory_is_not_accepted(self):
+        install = self.make_install()
+        config = install / "config"
+        config.mkdir()
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Replacement required", result.stderr)
+        self.assertTrue(config.is_dir())
 
     def test_installer_contains_no_root_launcher_or_backup_generation(self):
         source = INSTALLER.read_text(encoding="utf-8")

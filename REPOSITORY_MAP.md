@@ -59,7 +59,7 @@ one.
 
 | Path | Role |
 |---|---|
-| [`tests/test_portable_layout.py`](tests/test_portable_layout.py) | Verifies recognition of the exact maintained portable-installation layout, rejection without replacement, and absence of discarded launcher generation. |
+| [`tests/test_portable_layout.py`](tests/test_portable_layout.py) | Verifies recognition of the final credential-free portable layout, rejection without replacement, and absence of discarded launcher generation. |
 | [`tests/test_transcript_request.py`](tests/test_transcript_request.py) | Verifies ordinary and transcript-only Gemini request construction. |
 | [`tests/test_saved_gemini_responses.py`](tests/test_saved_gemini_responses.py) | Verifies saved responses, transcript checks, material-index search, missing-range planning, and deterministic chunk planning. |
 | [`tests/test_gemini_request_log.py`](tests/test_gemini_request_log.py) | Verifies logical requests, numbered runs, retry authorization, interruptions, and result binding. |

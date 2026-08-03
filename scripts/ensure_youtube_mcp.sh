@@ -38,7 +38,6 @@ verify_install() {
   candidate=$1
   [ -f "$candidate/VERSION" ] || return 1
   [ -f "$candidate/README.md" ] || return 1
-  [ -d "$candidate/config" ] || return 1
   [ -d "$candidate/state" ] || return 1
   [ -d "$candidate/work" ] || return 1
   [ -x "$candidate/runtime/bin/node" ] || return 1
@@ -46,7 +45,7 @@ verify_install() {
   for entry in "$candidate"/* "$candidate"/.[!.]* "$candidate"/..?*; do
     [ -e "$entry" ] || continue
     case "${entry##*/}" in
-      app | config | runtime | state | work | README.md | VERSION) ;;
+      app | runtime | state | work | README.md | VERSION) ;;
       *) return 1 ;;
     esac
   done
@@ -111,8 +110,8 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-mkdir -p "$portable/app" "$portable/runtime/bin" "$portable/config" \
-  "$portable/state" "$portable/work"
+mkdir -p "$portable/app" "$portable/runtime/bin" "$portable/state" \
+  "$portable/work"
 
 echo "Fetching pinned YouTube MCP source..." >&2
 git -C "$portable/app" init -q
@@ -168,7 +167,6 @@ printf '%s\n' \
   'Pinned YouTube MCP installation for ChatGPT Work.' \
   '' \
   '- `app/`: source, dependencies, and build' \
-  '- `config/`: local environment files; never commit secrets' \
   '- `runtime/`: bundled Node.js runtime' \
   '- `state/`: Gemini router state created when first needed' \
   '- `work/`: disposable requests, responses, arguments, and intermediate files' \
